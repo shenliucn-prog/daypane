@@ -7,11 +7,14 @@ import { readStatus } from './db.js';
 import { config } from './config.js';
 
 const imageCache = new Map();
-const PYTHON = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+const PYTHON = process.env.PYTHON_BIN
+  || (process.platform === 'win32'
+    ? 'C:/Users/Shen/.workbuddy/binaries/python/versions/3.13.12/python.exe'
+    : 'python3');
 
 function renderScreenPng(language = 'zh', port = 8787) {
   return new Promise((resolve, reject) => {
-    const script = path.join(process.cwd(), 'tools', 'render_screen.py');
+    const script = path.join(import.meta.dirname, '..', 'tools', 'render_screen.py');
     const child = spawn(PYTHON, [script, '--lang', language, '--url', 'http://127.0.0.1:' + port + '/api/dashboard'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 90000 });
     const chunks = [];
     child.stdout.on('data', d => chunks.push(d));
