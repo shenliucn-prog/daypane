@@ -371,12 +371,11 @@ function KindleDash:cancelRtcWake()
 end
 
 -- UI 定时器：设备醒着时按整点/半点刷新；同时维持 RTC 任务链。
+-- 自动刷新只在看板显示时运行——看板关掉后没必要继续每半小时唤醒设备。
 function KindleDash:armAutoRefresh(delay)
     if self._auto_timer then UIManager:unschedule(self._auto_timer) end
-    if not self.auto_on then
-        self:cancelRtcWake()
-        return
-    end
+    self:cancelRtcWake()
+    if not self.auto_on or not self.dash_widget then return end
     local function tick()
         if not self.auto_on then return end
         if self.dash_widget and not self._suspended then
@@ -603,12 +602,16 @@ function KindleDash:buildScreen(img_path, w, h)
         return true
     end
     function container:onClose()
+        -- 先标记已关闭再关窗：否则后台刷新会误判成"看板正显示"。
         dash.dash_widget = nil
+        -- 看板不在了，就没必要再每半小时把设备叫醒一次。
+        dash:armAutoRefresh()
         UIManager:close(self)
         return true
     end
     function container:onBack()
         dash.dash_widget = nil
+        dash:armAutoRefresh()
         UIManager:close(self)
         return true
     end
@@ -620,21 +623,23 @@ function KindleDash:buildScreen(img_path, w, h)
         dash:onSuspend()
         return true
     end
-    self.dash_widget = container
-    UIManager:show(container)
+    -- 只负责构建，不负责上屏：由 showDashboard 决定何时替换旧看板，
+    -- 这样构建失败时旧看板仍然完好地留在屏幕上。
+    return container
 end
 
 function KindleDash:showDashboard(path, offline)
     local previous = self.dash_widget
-    if previous then UIManager:close(previous); self.dash_widget = nil end
-    local ok, err = pcall(function() self:buildScreen(path, Screen:getWidth(), Screen:getHeight()) end)
+    local ok, result = pcall(self.buildScreen, self, path, Screen:getWidth(), Screen:getHeight())
     if not ok then
-        self.dash_widget = previous
-        self._last_error = "Display failed: " .. tostring(err)
+        self._last_error = "Display failed: " .. tostring(result)
         self:record("display_failed", self._last_error)
-        UIManager:show(InfoMessage:new{ text = self:tr("看板显示失败:\n") .. tostring(err), timeout = 8 })
+        UIManager:show(InfoMessage:new{ text = self:tr("看板显示失败:\n") .. tostring(result), timeout = 8 })
         return false
     end
+    UIManager:show(result)
+    if previous then UIManager:close(previous) end
+    self.dash_widget = result
     return true
 end
 
@@ -865,7 +870,8 @@ function KindleDash:init()
         local ok, value = pcall(JSON.decode, raw)
         if ok and type(value) == "table" then self._health_history = value end
     end
-    self:armAutoRefresh()
+    -- 不在这里开自动刷新：此刻看板还没上屏，armAutoRefresh 会直接跳过。
+    -- 用户打开看板（菜单"刷新看板"）时自然就会启动。
     self.ui.menu:registerToMainMenu(self)
 end
 

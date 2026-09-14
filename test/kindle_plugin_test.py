@@ -139,10 +139,22 @@ UI.queue[retry]=nil; retry()
 assert(refreshes == 2)
 UI.queue[retry]=nil; retry()
 assert(refreshes == 3 and UI.queue[retry]==nil)
+-- A failed build must leave the on-screen dashboard untouched: closing it
+-- first and restoring the reference afterwards would claim a closed widget
+-- is still displayed, and the device would look stuck.
+local before = d.dash_widget
+d.buildScreen = function() error('bad render') end
+assert(d:showDashboard('/tmp/never.png', false) == false and d.dash_widget == before)
+-- Closing the dashboard must stop both the UI timer and the RTC wake chain,
+-- otherwise the device keeps waking up every interval for nothing.
+assert(#WAKEUP.tasks == 1 and UI.queue[d._auto_timer] ~= nil)
+d.dash_widget = nil
+d:armAutoRefresh()
+assert(#WAKEUP.tasks == 0 and d._rtc_task == nil and UI.queue[d._auto_timer] == nil)
 d:onCloseWidget()
 assert(UI.queue[d._auto_timer]==nil and UI.queue[d._resume_tick]==nil)
-assert(#WAKEUP.tasks==0 and d._rtc_task==nil)
-print('PASS: HTTPS bytes, network failure, timer cancellation, RTC wake chain, suspend, resume retry, cleanup')
+assert(#WAKEUP.tasks==0)
+print('PASS: HTTPS bytes, network failure, timer cancellation, RTC wake chain, suspend, resume retry, dashboard close, cleanup')
 ''')
 
 lua.execute('''
