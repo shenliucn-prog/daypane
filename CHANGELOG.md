@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.2
+
+- Field test verdict on the Paperwhite 3: the RTC alarm does fire (crash.log shows the scheduled
+  wake and a hardware resume), but the device wakes ~90–100 s after the programmed epoch, which
+  exceeds `WakeupMgr:wakeupAction(90)`'s proximity window. The queued task is therefore rejected
+  ("Kindle unscheduled wakeup") and never runs. Recurring RTC wake cannot deliver auto-refresh on
+  this device and is now opt-in (`rtc_wake` setting, default off).
+- Hold-awake mode replaces it (on by default): while the dashboard is shown, the plugin pauses
+  KOReader's AutoSuspend (`PluginShare.pause_auto_suspend`) and blocks the firmware
+  screensaver/suspend (`lipc-set-prop com.lab126.powerd preventScreenSaver 1`) — the same
+  dual-channel approach the device's keepalive plugin uses. The UI timer then refreshes on
+  schedule; a menu toggle turns the mode off.
+- Manual power-key suspend still works: suspending releases the hold, and resuming re-engages it
+  when the dashboard is still on screen. Closing the dashboard releases the hold so the device
+  sleeps normally again.
+- Suspend health records now say `hold-screen mode` / `rtc armed` / `rtc NOT armed`, and hold
+  engagement is recorded (`hold_screen_on`/`hold_screen_off`), so the refresh mode is always
+  visible in the log. Device status shows the hold state.
+
 ## 0.3.0
 
 - Merged the `runtime.lua` overlay into `main.lua`. The old dual-layer plugin was loaded as

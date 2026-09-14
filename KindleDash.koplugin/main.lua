@@ -43,7 +43,7 @@ local JSON = require("json")
 -- 网络请求超时：电脑关机时不要让用户等太久，8 秒无响应就切换下一级。
 http.TIMEOUT = 8
 
-local VERSION = "0.3.1"
+local VERSION = "0.3.2"
 local REFRESH_SEC = 30 * 60
 local MAX_IMAGE = 4 * 1024 * 1024
 local DEFAULT_HOST = ""
@@ -143,6 +143,12 @@ local EN = {
     ["实验：休眠一次并尝试在2分钟后唤醒。请确保可按电源键恢复。不会开启循环休眠。"] = "Experimental: sleep once and attempt a wake in 2 minutes. Keep the power button accessible. This does not enable recurring sleep.",
     ["关于"] = "About",
     ["每半小时 RTC 唤醒刷新，设备平时正常休眠\n"] = "RTC wake every half hour; the device sleeps normally in between\n",
+    ["常亮看板模式（看板显示时防休眠）"] = "Stay awake while dashboard is shown",
+    ["常亮: 开（看板显示期间设备不休眠）"] = "Hold awake: on (no sleep while the dashboard is shown)",
+    ["常亮: 关"] = "Hold awake: off",
+    ["看板显示期间保持常亮并定时刷新\n"] = "Stays awake while the dashboard is shown and refreshes on schedule\n",
+    ["开"] = "ON",
+    ["关"] = "OFF",
     ["AI 额度走局域网实时，关机显示最后值\n"] = "AI activity estimates may retain old values offline\n",
     ["顶部下滑/顶部点击返回看板退出"] = "Tap / swipe down from the top to exit",
 }
@@ -349,6 +355,10 @@ function KindleDash:scheduleRtcWake()
         self:cancelRtcWake()
         return
     end
+    -- PW3 实测：闹钟能唤醒硬件，但滞后 ~90-100s，被 wakeupAction(90) 拒收，
+    -- 任务永远不执行。默认关闭 RTC 唤醒（常亮模式取而代之）；
+    -- 想在别的机型上试，可在设置里开 rtc_wake。
+    if not self:option("rtc_wake", false) then return end
     local mgr = Device.wakeup_mgr
     if not mgr then
         -- Kindle 上 wakeup_mgr 由 KindlePowerD:initWakeupMgr() 创建，需要 lipc 可用
@@ -629,13 +639,15 @@ function KindleDash:buildScreen(img_path, w, h)
     function container:onClose()
         -- 先标记已关闭再关窗：否则后台刷新会误判成"看板正显示"。
         dash.dash_widget = nil
-        -- 看板不在了，就没必要再每半小时把设备叫醒一次。
+        -- 看板不在了：停止定时刷新，也不再阻止设备休眠。
+        dash:holdScreen(false)
         dash:armAutoRefresh()
         UIManager:close(self)
         return true
     end
     function container:onBack()
         dash.dash_widget = nil
+        dash:holdScreen(false)
         dash:armAutoRefresh()
         UIManager:close(self)
         return true
@@ -665,6 +677,10 @@ function KindleDash:showDashboard(path, offline)
     UIManager:show(result)
     if previous then UIManager:close(previous) end
     self.dash_widget = result
+    -- 看板已在屏上：进入常亮模式，让 UI 定时器能按点刷新。
+    if self:option("hold_screen", true) and not self._suspended then
+        self:holdScreen(true)
+    end
     return true
 end
 
@@ -678,6 +694,7 @@ function KindleDash:showStatus()
     local text = self:label("Device status", "设备状态") .. " · " .. VERSION .. "\n"
         .. self:label("Screen: ", "屏幕：") .. Screen:getWidth() .. " × " .. Screen:getHeight() .. "\n"
         .. self:label("RTC wake: ", "RTC 唤醒：") .. (Device.wakeup_mgr and self:label("available", "可用") or self:label("unavailable", "不可用")) .. "\n"
+        .. self:label("Hold awake: ", "常亮：") .. (self._holding and self:tr("开") or self:tr("关")) .. "\n"
         .. self:label("Source: ", "图源：") .. tostring(self._source or m.source or "—") .. "\n"
         .. self:label("Content generated: ", "内容生成：") .. fmtTime(m.generatedAt and m.generatedAt / 1000) .. "\n"
         .. self:label("Cloud state: ", "云端状态：") .. tostring(m.state or "Unknown / 未知") .. "\n"
@@ -846,6 +863,46 @@ function KindleDash:safeRefresh()
     end
 end
 
+-- ---------------- 常亮保活 ----------------
+
+local PluginShare
+
+local function pluginShare()
+    if PluginShare ~= nil then return PluginShare end
+    local ok, mod = pcall(require, "pluginshare")
+    if ok and type(mod) == "table" then PluginShare = mod else PluginShare = false end
+    return PluginShare
+end
+
+-- 看板显示期间防止设备休眠（与 keepalive 插件同款双通道，真机已验证）：
+--   1) PluginShare.pause_auto_suspend：停掉 AutoSuspend 插件的挂起倒计时；
+--   2) lipc preventScreenSaver：挡住固件层的屏保/休眠。
+-- 为什么不用 RTC 定时唤醒：PW3 实测闹钟会响、设备会醒，但唤醒滞后 ~90-100s，
+-- 超过 WakeupMgr:wakeupAction(90) 的邻近窗口 → 任务被拒收、刷新不执行，
+-- 且每次无谓唤醒还耗电。常亮 + UI 定时器在这台设备上是唯一可靠路径。
+function KindleDash:holdScreen(on)
+    if self._holding == on then return end
+    self._holding = on
+    local ps = pluginShare()
+    if ps then ps.pause_auto_suspend = on end
+    pcall(os.execute, "lipc-set-prop com.lab126.powerd preventScreenSaver " .. (on and "1" or "0"))
+    self:record(on and "hold_screen_on" or "hold_screen_off")
+end
+
+function KindleDash:toggleHoldScreen()
+    local on = not self:option("hold_screen", true)
+    self:setOption("hold_screen", on)
+    if on and self.dash_widget and not self._suspended then
+        self:holdScreen(true)
+    else
+        self:holdScreen(false)
+    end
+    UIManager:show(InfoMessage:new{
+        text = on and self:tr("常亮: 开（看板显示期间设备不休眠）") or self:tr("常亮: 关"),
+        timeout = 3,
+    })
+end
+
 -- ---------------- 生命周期 ----------------
 
 function KindleDash:onSuspend()
@@ -860,16 +917,20 @@ function KindleDash:onSuspend()
     -- 否则 _busy 永久为 true，此后所有 requestRefresh 直接 return，自动刷新彻底停摆。
     self._busy = false
     self._generation = (self._generation or 0) + 1
-    -- 确保 RTC 任务在设备真正入睡前已注册，醒来后能按点刷新。
+    -- 用户主动按键休眠必须放行：清掉常亮，否则固件挡着睡不下去。
+    -- 醒来后 onResume 会按配置重新上常亮。
+    self:holdScreen(false)
     self:scheduleRtcWake()
-    local armed = false
-    if Device.wakeup_mgr then
+    local armed
+    if self:option("rtc_wake", false) and Device.wakeup_mgr then
         local ok, scheduled = pcall(function() return Device.wakeup_mgr:isWakeupAlarmScheduled() end)
         armed = ok and scheduled
+    else
+        armed = "hold"
     end
-    -- 这条记录是"到底会不会自动刷新"的唯一证据：若每次 suspend 都是
-    -- "rtc NOT armed"，说明唤醒链断了，设备睡下去就再也不会自己醒。
-    self:record("suspend", armed and "rtc armed" or "rtc NOT armed")
+    -- 这条记录是"到底会不会自动刷新"的唯一证据：hold=常亮模式（醒着定时刷），
+    -- "rtc armed"=RTC 唤醒模式已上弦，"rtc NOT armed"=唤醒链断了（设备睡下去不会再自己醒）。
+    self:record("suspend", armed == "hold" and "hold-screen mode" or (armed and "rtc armed" or "rtc NOT armed"))
 end
 
 function KindleDash:onResume()
@@ -882,9 +943,13 @@ function KindleDash:onResume()
         self._network_deadline = nil
     end
     -- 走 requestRefresh：它自带防重入、受管 Wi-Fi（唤醒后 WiFi 通常是关的）和失败退避。
-    -- 不要在这里再造一套重试——两套重试会并发写缓存。
+    -- 不要在这里造第二套重试——两套重试会并发写缓存。
+    -- 同时恢复常亮：看板还在屏上的话，设备醒着才能继续定时刷新。
     self._resume_tick = function()
-        if self.dash_widget and not self._suspended then self:requestRefresh(true, false) end
+        if self.dash_widget and not self._suspended then
+            if self:option("hold_screen", true) then self:holdScreen(true) end
+            self:requestRefresh(true, false)
+        end
     end
     -- Wi-Fi 恢复是异步的，稍等再刷。
     UIManager:scheduleIn(5, self._resume_tick)
@@ -902,6 +967,7 @@ function KindleDash:onCloseWidget()
         self._network_deadline = nil
     end
     self._busy = false
+    self:holdScreen(false)
     self:cancelRtcWake()
 end
 
@@ -916,6 +982,7 @@ function KindleDash:init()
     self._rtc_task = nil
     self._deferred = nil
     self._network_deadline = nil
+    self._holding = false
     self._suspended = false
     self._busy = false
     self._last_ok = false
@@ -1066,6 +1133,9 @@ function KindleDash:addToMainMenu(menu_items)
             { text = self:tr("设置局域网服务器"), callback = function() self:setServerAddress() end },
             { text = self:tr("设置云端图地址"), callback = function() self:setCloudUrl() end },
             { text = self:tr("切换自动刷新 (整点/半点)"), callback = function() self:toggleAutoRefresh() end },
+            { text = self:tr("常亮看板模式（看板显示时防休眠）"),
+              checked_func = function() return self:option("hold_screen", true) end,
+              callback = function() self:toggleHoldScreen() end },
             { text = self:tr("设置：图片或清单地址"), callback = function() self:setupWizard() end },
             { text = self:tr("设备状态"), callback = function() self:showStatus() end },
             { text = self:tr("刷新间隔"), callback = function() self:editInterval() end },
@@ -1074,7 +1144,7 @@ function KindleDash:addToMainMenu(menu_items)
                 UIManager:show(InfoMessage:new{
                     text = "Shawn Kanban v" .. VERSION .. "\n"
                        .. self:label("Image sources: LAN > Cloud > Cache\n", "取图顺序：局域网 PC > 云端 Pages > 本地缓存\n")
-                       .. self:tr("每半小时 RTC 唤醒刷新，设备平时正常休眠\n")
+                       .. self:tr("看板显示期间保持常亮并定时刷新\n")
                        .. self:tr("AI 额度走局域网实时，关机显示最后值\n")
                        .. self:tr("顶部下滑/顶部点击返回看板退出"),
                     timeout = 6,

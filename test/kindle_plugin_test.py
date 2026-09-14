@@ -44,6 +44,16 @@ function POWER:resetT1Timeout() self.resets=self.resets+1 end
 function POWER:isCharging() return false end
 function POWER:isCharged() return false end
 
+-- os.execute: record lipc calls so hold-awake tests can inspect them.
+EXEC = {commands={}}
+function os.execute(cmd) table.insert(EXEC.commands, cmd); return true end
+
+-- Per-instance settings backing store (pluginshare-style preferences).
+PREFS = {values={}}
+function PREFS:readSetting(key) return self.values[key] end
+function PREFS:saveSetting(key, v) self.values[key] = v end
+function PREFS:flush() end
+
 -- RTC wake manager (Device.wakeup_mgr): the plugin's auto-refresh depends on it.
 local wake = {tasks={}}
 WAKEUP = wake
@@ -107,45 +117,48 @@ lua.execute('''
 local d = Plugin:new{auto_on=true}
 d.fileExists=function() return true end
 d.dash_widget = {}
+d.preferences = function() return PREFS end
+-- Plugin:new() does not run init() (KOReader's PluginLoader does); mirror the
+-- lifecycle fields it would set so assertions check real hold-state transitions.
+d._holding = false
+d._suspended = false
+d._busy = false
 local refreshes = 0
 d.refreshDashboard=function(self) assert(self==d); refreshes=refreshes+1; return true end
 assert(d:request('https://example.test/screen.png', 1024) == '\\137PNGrest')
 HTTP.request=function() return nil, 'timeout' end
 assert(d:request('https://example.test/screen.png', 1024) == nil)
+-- Default profile (rtc_wake off after the PW3 field test): auto-refresh runs
+-- purely on UI timers and never arms RTC wake tasks.
 d:armAutoRefresh()
+assert(UI.queue[d._auto_timer] ~= nil and #WAKEUP.tasks == 0)
 local old = d._auto_timer
 d:toggleAutoRefresh()
 assert(UI.queue[old] == nil and #WAKEUP.tasks == 0)
 d:toggleAutoRefresh()
-assert(UI.queue[old] == nil and UI.queue[d._auto_timer] and #WAKEUP.tasks == 1)
--- RTC chain: sleeping must leave exactly one wake task armed.
-local first = d._rtc_task
+assert(UI.queue[old] == nil and UI.queue[d._auto_timer] and #WAKEUP.tasks == 0)
+-- Showing the dashboard engages hold-awake: AutoSuspend paused and the firmware
+-- screensaver blocked via lipc (the two channels the keepalive plugin uses).
+assert(d._holding == false and PS.pause_auto_suspend == nil and #EXEC.commands == 0)
+assert(d:showDashboard('/tmp/hold.png', false) == true)
+assert(d._holding == true and PS.pause_auto_suspend == true)
+assert(EXEC.commands[#EXEC.commands] == 'lipc-set-prop com.lab126.powerd preventScreenSaver 1')
+-- A manual power-key suspend must release the hold (otherwise the firmware
+-- would refuse to sleep); resume re-engages it because the dashboard is still up.
 d:onSuspend()
-assert(d._suspended == true and #WAKEUP.tasks == 1)
-assert(d._rtc_task ~= first and WAKEUP.tasks[1].fn == d._rtc_task)
--- Firing must NOT re-arm synchronously: WakeupMgr:wakeupAction() calls
--- removeTask(1) right after this callback returns, which would delete the
--- freshly queued task and silently kill the whole wakeup chain.
-WAKEUP.tasks[1].fn()
-assert(d._suspended == false and refreshes == 0 and #WAKEUP.tasks == 1)
-local pending = d._deferred
-assert(pending ~= nil and UI.queue[pending] == 0)
-UI.queue[pending] = nil; pending()
-assert(refreshes == 1)
-assert(#WAKEUP.tasks == 1 and WAKEUP.tasks[1].fn == d._rtc_task)
+assert(d._holding == false and PS.pause_auto_suspend == false)
 d:onResume()
-assert(UI.queue[d._resume_tick]==5)
-local retry=d._resume_tick
+local retry = d._resume_tick
 UI.queue[retry]=nil; retry()
-assert(refreshes == 2)
+assert(d._holding == true and PS.pause_auto_suspend == true and refreshes == 1)
 UI.queue[retry]=nil; retry()
-assert(refreshes == 3 and UI.queue[retry]==nil)
+assert(refreshes == 2 and UI.queue[retry]==nil)
 -- Suspending mid-refresh must release the re-entrancy lock. If it stayed set,
 -- every later requestRefresh() would return immediately and auto-refresh would
 -- be dead until a restart -- the very symptom this plugin is supposed to fix.
 d:requestRefresh(true, false)
 d:onSuspend()
-assert(d._busy == false)
+assert(d._busy == false and d._holding == false)
 d:onResume()
 assert(d._busy == false)
 -- A manual refresh must be able to preempt an in-flight background refresh;
@@ -160,16 +173,37 @@ d._busy = false
 local before = d.dash_widget
 d.buildScreen = function() error('bad render') end
 assert(d:showDashboard('/tmp/never.png', false) == false and d.dash_widget == before)
--- Closing the dashboard must stop both the UI timer and the RTC wake chain,
--- otherwise the device keeps waking up every interval for nothing.
-assert(#WAKEUP.tasks == 1 and UI.queue[d._auto_timer] ~= nil)
+-- Closing the dashboard releases the hold and stops the UI timer.
 d.dash_widget = nil
 d:armAutoRefresh()
-assert(#WAKEUP.tasks == 0 and d._rtc_task == nil and UI.queue[d._auto_timer] == nil)
+assert(UI.queue[d._auto_timer] == nil and d._holding == false and PS.pause_auto_suspend == false)
 d:onCloseWidget()
 assert(UI.queue[d._auto_timer]==nil and UI.queue[d._resume_tick]==nil)
-assert(#WAKEUP.tasks==0)
-print('PASS: HTTPS bytes, network failure, timer cancellation, RTC wake chain, suspend, resume retry, dashboard close, cleanup')
+-- RTC wake chain (opt-in): armed while the dashboard is up, re-armed only via
+-- the deferred tick because WakeupMgr:wakeupAction() calls removeTask(1) right
+-- after the callback returns, which would delete a synchronously queued task.
+d.preferences = function()
+    local p = {values={rtc_wake=true}}
+    function p:readSetting(key) return self.values[key] end
+    function p:saveSetting(key, v) self.values[key] = v end
+    function p:flush() end
+    return p
+end
+d.dash_widget = {}
+d:armAutoRefresh()
+assert(#WAKEUP.tasks == 1 and d._rtc_task ~= nil)
+local first = d._rtc_task
+d:onSuspend()
+assert(#WAKEUP.tasks == 1 and d._rtc_task ~= first and WAKEUP.tasks[1].fn == d._rtc_task)
+WAKEUP.tasks[1].fn()
+local pending = d._deferred
+assert(pending ~= nil and UI.queue[pending] == 0)
+local seen = refreshes
+UI.queue[pending] = nil; pending()
+assert(refreshes == seen + 1 and #WAKEUP.tasks == 1 and WAKEUP.tasks[1].fn == d._rtc_task)
+d:onCloseWidget()
+assert(#WAKEUP.tasks == 0 and d._rtc_task == nil)
+print('PASS: HTTPS bytes, network failure, timer cancellation, hold-awake channels, suspend, resume retry, dashboard close, opt-in RTC chain, cleanup')
 ''')
 
 lua.execute('''
