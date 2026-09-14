@@ -1,13 +1,25 @@
--- Shawn Kanban · Kindle 端显示插件（混合路线 v2）
--- 拉取渲染好的整屏 PNG（1072x1448，1-bit 抖动 / ~30KB），用 ImageWidget 满屏显示。
+-- Shawn Kanban · Kindle 端显示插件（单一实现 v0.3.0）
+--
+-- 把渲染好的整屏 PNG（1072x1448，1-bit 抖动 / ~30KB）满屏显示。
 -- 排版/字体/灰度/抖动全部在渲染端完成，Kindle 只负责取图与显示。
 --
--- 取图三级降级链（关键：电脑关机也能拿到新内容）：
---   1) 局域网 PC（/api/screen）—— 数据最新最全，电脑关机时连不上
---   2) 云端静态图（GitHub Pages）—— 由外部定时任务每半小时触发 Actions 渲染，电脑关机仍可用
+-- 取图三级降级链：
+--   1) 局域网 PC（/api/display 清单 + /api/image）—— 数据最新，电脑关机时连不上
+--   2) 云端静态图（GitHub Pages manifest）—— GitHub Actions 每半小时渲染，电脑关机仍可用
 --   3) 本地持久缓存（settings 目录）—— 网络全断时显示最后一次的图
 --
--- 自动刷新：onResume 唤醒即刷 + 30 分钟定时器。
+-- 自动刷新（v0.3.0 重构）：
+--   * 允许设备正常休眠。不再用 pause_auto_suspend / resetT1Timeout 硬扛——那两个在
+--     Kindle 上防不住固件屏保，却会在 resume 边界调用 powerd 导致 UI 卡死（只能重启）。
+--   * 改用 RTC（Device.wakeup_mgr）每半小时唤醒一次 → 刷新 → 再睡。省电且可靠。
+--     Kindle 只在 ReadyToSuspend 时把队首任务写进 powerd 的 RTC 闹钟，所以队列里
+--     必须始终留一条任务；且 WakeupMgr:wakeupAction() 会在回调返回后 removeTask(1)，
+--     回调内部绝不能同步重排（见 scheduleRtcWake 注释）。
+--   * 设备醒着时，UI 定时器负责对齐整点/半点的刷新。
+--
+-- 历史坑：本插件曾拆成 main.lua + runtime.lua 两层，runtime 由 dofile 在 main 之后执行、
+-- 静默覆盖 main 的同名函数，导致 main 里大量代码是死代码、改一处不生效。v0.3.0 合并为
+-- 单一实现，杜绝覆盖。
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local UIManager = require("ui/uimanager")
@@ -23,32 +35,58 @@ local GestureRange = require("ui/gesturerange")
 local http = require("socket.http")
 local LuaSettings = require("luasettings")
 local DataStorage = require("datastorage")
+local RenderImage = require("ui/renderimage")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
--- 通知 autosuspend 插件别挂起设备（官方机制，autoturn/keepalive 同款）。
--- 用 pcall 防御：模块万一缺失也不能让整个插件加载失败（重演 lfs 事故的教训）。
-local ok_ps, PluginShare = pcall(require, "pluginshare")
-if not ok_ps then PluginShare = nil end
+local JSON = require("json")
 
--- 网络请求超时：电脑关机时不要让用户等太久，8 秒无响应就切换离线缓存
+-- 网络请求超时：电脑关机时不要让用户等太久，8 秒无响应就切换下一级。
 http.TIMEOUT = 8
 
+local VERSION = "0.3.0"
 local REFRESH_SEC = 30 * 60
+local MAX_IMAGE = 4 * 1024 * 1024
 local DEFAULT_HOST = ""
 local DEFAULT_PORT = "8787"
 -- 云端静态图完整 URL（GitHub Pages），留空则只用局域网
 local DEFAULT_CLOUD = "https://shenliucn-prog.github.io/shawn-kanban/screen.png"
--- 缓存存到 settings 目录（/mnt/us/koreader/settings/），Kindle 重启后仍在
 local CACHE_IMG_NAME = "kindledash_screen.png"
 local CACHE_TS_NAME  = "kindledash_ts.txt"
--- KOReader 自带的 CA 证书，用于校验 https
-local CA_BUNDLE = DataStorage:getDataDir() .. "/ca-bundle.crt"
+
+-- KOReader 的 CA 证书实际在 <datadir>/data/ca-bundle.crt（少写 /data 一层就会一直
+-- 报 "CA bundle missing"，云端 https 永远取不到图）。运行时探测两个候选路径。
+local function caBundlePath(exists)
+    local base = DataStorage:getDataDir()
+    local primary = base .. "/data/ca-bundle.crt"
+    if exists(primary) then return primary end
+    local fallback = base .. "/ca-bundle.crt"
+    if exists(fallback) then return fallback end
+    return nil
+end
+
+-- SHA-256（同目录 sha256.lua，纯 LuaJIT 实现）。加载失败时降级为不做校验，
+-- 绝不因此让整个插件加载失败。
+local sha256
+do
+    local ok, mod = pcall(function()
+        local src = debug.getinfo(1, "S").source
+        local dir = src and src:match("^@(.*)/")
+        if not dir then return nil end
+        return dofile(dir .. "/sha256.lua")
+    end)
+    if ok and type(mod) == "function" then sha256 = mod end
+end
 
 local KindleDash = WidgetContainer:new{
     name = "KindleDash",
     is_doc_only = false,
     sorting_hint = "tools",
 }
+
+-- 暴露给实例，便于显式替换（例如测试注入已知实现）。nil = 不做校验。
+KindleDash.sha256 = sha256
+
+-- ---------------- 文案 / 语言 ----------------
 
 -- Interface locale is independent of the Kindle firmware language.
 -- Preserve Chinese for existing plugin settings; new installs follow KOReader.
@@ -94,11 +132,20 @@ local EN = {
     ["设置局域网服务器"] = "Set LAN server",
     ["设置云端图地址"] = "Set cloud image URL",
     ["切换自动刷新 (整点/半点)"] = "Toggle auto refresh (:00 / :30)",
+    ["设备状态"] = "Device status",
+    ["刷新间隔"] = "Refresh interval",
+    ["刷新间隔（分钟，5–1440）"] = "Refresh interval (minutes, 5–1440)",
+    ["设置：图片或清单地址"] = "Setup: image or manifest URL",
+    ["使用自己的图源或内置示例。城市、时区和布局在生成端配置。保存后测试图片。"] = "Use your own server or the built-in demo. City, timezone and layout are configured on the renderer. Then choose Test image.",
+    ["保存并测试"] = "Save & test",
+    ["实验：单次 RTC 唤醒测试"] = "Experimental: one RTC wake test",
+    ["此设备不支持 RTC 唤醒接口。"] = "RTC wake is unavailable on this device.",
+    ["实验：休眠一次并尝试在2分钟后唤醒。请确保可按电源键恢复。不会开启循环休眠。"] = "Experimental: sleep once and attempt a wake in 2 minutes. Keep the power button accessible. This does not enable recurring sleep.",
     ["关于"] = "About",
-    ["Shawn Kanban\n取图顺序：局域网 PC > 云端 Pages > 本地缓存\n"] = "Shawn Kanban\nImage sources: LAN > Cloud > Cache\n",
-    ["云端每半小时触发 GitHub Actions 渲染\n"] = "Cloud generation is triggered every half hour\n",
+    ["Shawn Kanban v0.3.0\n取图顺序：局域网 PC > 云端 Pages > 本地缓存\n"] = "Shawn Kanban v0.3.0\nImage sources: LAN > Cloud > Cache\n",
+    ["每半小时 RTC 唤醒刷新，设备平时正常休眠\n"] = "RTC wake every half hour; the device sleeps normally in between\n",
     ["AI 额度走局域网实时，关机显示最后值\n"] = "AI activity estimates may retain old values offline\n",
-    ["唤醒即刷 + 30 分自动\n顶部下滑/顶部点击返回"] = "Refresh on resume and every half hour\nTap/swipe down from the top to exit",
+    ["顶部下滑/顶部点击返回看板退出"] = "Tap / swipe down from the top to exit",
 }
 function KindleDash:tr(text)
     return self.language == "en" and (EN[text] or text) or text
@@ -120,21 +167,8 @@ function KindleDash:setLanguage(language)
     })
 end
 
-function KindleDash:init()
-    self.language = self:loadLanguage()
-    self.auto_on = true
-    self.host = self:loadHost()
-    self.cloud = self:loadCloud()
-    self.dash_widget = nil
-    self._auto_timer = nil
-    self._last_ok = false
-    self._offline = false
-    self._source = nil   -- 本次图像来自哪里：本机 / 云端 / 缓存
-    self:armAutoRefresh()
-    self.ui.menu:registerToMainMenu(self)
-end
+-- ---------------- 设置读写 ----------------
 
--- ---------- 设置 ----------
 function KindleDash:settingsPath()
     return DataStorage:getSettingsDir() .. "/kindledash.lua"
 end
@@ -149,7 +183,7 @@ function KindleDash:cacheTs()
 end
 function KindleDash:ensureCacheDir()
     local dir = self:cacheDir()
-    if lfs.attributes(dir, "mode") ~= "directory" then
+    if dir and lfs.attributes(dir, "mode") ~= "directory" then
         lfs.mkdir(dir)
     end
 end
@@ -161,10 +195,33 @@ function KindleDash:readTs()
 end
 function KindleDash:writeTs(s)
     self:ensureCacheDir()
-    local f, err = io.open(self:cacheTs(), "wb")
-    if not f then return nil, err end
+    local f = io.open(self:cacheTs(), "wb")
+    if not f then return nil end
     f:write(s or ""); f:close()
     return true
+end
+function KindleDash:fileExists(path)
+    local f = io.open(path, "rb")
+    if f then f:close(); return true end
+    return false
+end
+
+-- 设置项统一走 LuaSettings，任何异常都降级为默认值，避免设置缺失时崩。
+function KindleDash:preferences()
+    return LuaSettings:open(self:settingsPath())
+end
+function KindleDash:option(key, default)
+    local ok, v = pcall(function() return self:preferences():readSetting(key) end)
+    if not ok or v == nil then return default end
+    return v
+end
+function KindleDash:setOption(key, value)
+    pcall(function()
+        local s = self:preferences(); s:saveSetting(key, value); s:flush()
+    end)
+end
+function KindleDash:label(en, zh)
+    return self.language == "en" and en or zh
 end
 
 function KindleDash:loadHost()
@@ -192,7 +249,6 @@ function KindleDash:saveHost(host)
     end
     self.host = host
 end
-
 function KindleDash:loadCloud()
     local ok, s = pcall(function() return LuaSettings:open(self:settingsPath()) end)
     if ok and s and s:has("cloud") then
@@ -209,43 +265,154 @@ function KindleDash:saveCloud(url)
     self.cloud = url or ""
 end
 
--- ---------- 阻止深度挂起 ----------
--- Kindle 上 canStandby=false、canSuspend=true：一旦进 suspend，UIManager 定时器
--- 全部停止（整点自动刷新形同虚设），且历史上出现过电源键唤不醒、必须插电才恢复。
--- 所以看板显示期间用官方 PluginShare.pause_auto_suspend 阻止挂起，退出时恢复原值。
--- 严禁 preventStandby（会锁死电源键，历史事故）。
-function KindleDash:holdAwake(on)
-    if not PluginShare then return end
-    if on then
-        if self._hold_awake then return end
-        self._saved_pause = PluginShare.pause_auto_suspend
-        PluginShare.pause_auto_suspend = true
-        self._hold_awake = true
-        self._awake_tick = function()
-            if not self._hold_awake or self._suspended then return end
-            -- Reset the native idle timer without disabling the power button.
-            local power = Device:getPowerDevice()
-            if Device:isKindle() and power.resetT1Timeout and not PluginShare.keepalive
-                and not (power:isCharging() and not power:isCharged()) then
-                local ok, err = pcall(power.resetT1Timeout, power)
-                if not ok then logger.warn("ShawnKanban idle reset failed", err) end
-            end
-            UIManager:scheduleIn(240, self._awake_tick)
-        end
-        self._awake_tick()
-        logger.info("ShawnKanban holdAwake ON")
+-- ---------------- 健康日志（诊断用，写到缓存目录） ----------------
+
+function KindleDash:record(event, detail)
+    local ok, err = pcall(function()
+        self:ensureCacheDir()
+        local dir = self:cacheDir()
+        if not dir then return end
+        local path = dir .. "/kindledash-health.json"
+        local history = self._health_history or {}
+        local power = Device:getPowerDevice()
+        local ok_cap, battery = pcall(function() return power:getCapacity() end)
+        history[#history + 1] = {
+            at = os.time(), event = event,
+            detail = tostring(detail or ""):sub(1, 240),
+            battery = ok_cap and battery or nil,
+        }
+        while #history > 192 do table.remove(history, 1) end
+        self._health_history = history
+        local f = io.open(path .. ".tmp", "wb")
+        if f then f:write(JSON.encode(history)); f:close(); os.rename(path .. ".tmp", path) end
+    end)
+    if not ok then logger.warn("ShawnKanban record failed", tostring(err)) end
+end
+
+-- ---------------- 电源与刷新调度 ----------------
+-- 设备允许正常休眠；用 RTC 定时唤醒实现省电的"半小时自动刷新"。
+-- 设备醒着时另有 UI 定时器（armAutoRefresh）兜底。
+
+function KindleDash:retryDelay()
+    return math.min(1800, 60 * 2 ^ math.min((self._failures or 1) - 1, 5))
+end
+
+-- 到下一个整点/半点的秒数（REFRESH_SEC 可配置，默认 30 分钟）。
+function KindleDash:nextDelay()
+    local interval = tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC
+    interval = math.max(300, math.min(86400, interval))
+    if self:option("night_mode", false) then
+        local hour = os.date("*t").hour
+        if hour >= 23 or hour < 7 then interval = math.max(interval, 7200) end
+    end
+    return interval - os.time() % interval
+end
+
+-- 把任务推迟到 UI 事件循环的下一拍执行（KOReader 的 nextTick 就是 scheduleIn(0)）。
+function KindleDash:defer(fn)
+    self:cancelDeferred()
+    self._deferred = fn
+    if UIManager.nextTick then
+        UIManager:nextTick(fn)
     else
-        if not self._hold_awake then return end
-        PluginShare.pause_auto_suspend = self._saved_pause
-        self._hold_awake = false
-        if self._awake_tick then UIManager:unschedule(self._awake_tick) end
-        self._awake_tick = nil
-        logger.info("ShawnKanban holdAwake OFF")
+        UIManager:scheduleIn(0, fn)
+    end
+    return fn
+end
+
+function KindleDash:cancelDeferred()
+    if self._deferred then
+        UIManager:unschedule(self._deferred)
+        self._deferred = nil
     end
 end
 
--- ---------- 拉取屏幕 ----------
--- 取图优先级：局域网 PC > 云端 Pages > 本地缓存（缓存由调用方处理）
+-- 注册一次性 RTC 唤醒任务：到点唤醒设备 → 刷新 → 再注册下一次。
+-- KOReader 在 ReadyToSuspend 时才通过 lipc 把队首任务写进 powerd 的 RTC 闹钟，
+-- 所以任务必须"常备"：任何时刻队里都得有一条。
+function KindleDash:scheduleRtcWake()
+    if not self.auto_on then
+        self:cancelRtcWake()
+        return
+    end
+    local mgr = Device.wakeup_mgr
+    if not mgr then return end
+    if Device.canSuspend and not Device:canSuspend() then return end
+    local interval = tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC
+    local delay = self:nextDelay()
+    if delay < 30 then delay = delay + interval end
+    if self._rtc_task then
+        pcall(function() mgr:removeTasks(nil, self._rtc_task) end)
+        self._rtc_task = nil
+    end
+    self._rtc_task = function()
+        self._suspended = false
+        -- ⚠️ WakeupMgr:wakeupAction() 会在本回调返回后立刻 removeTask(1)。
+        -- 如果在这里同步重排任务，新任务会排到队首、被那次 removeTask 一并删掉，
+        -- 唤醒链当场断掉（之后每次唤醒都变成"no tasks"而静默失效）。
+        -- 因此重排与刷新都必须推迟到下一拍。
+        self:defer(function()
+            self._deferred = nil
+            self:scheduleRtcWake()
+            pcall(function() self:requestRefresh(true, false) end)
+        end)
+    end
+    local ok = pcall(function() mgr:addTask(delay, self._rtc_task) end)
+    if ok then self._next_attempt = os.time() + delay end
+end
+
+function KindleDash:cancelRtcWake()
+    self:cancelDeferred()
+    if self._rtc_task and Device.wakeup_mgr then
+        local task = self._rtc_task
+        self._rtc_task = nil
+        pcall(function() Device.wakeup_mgr:removeTasks(nil, task) end)
+    end
+end
+
+-- UI 定时器：设备醒着时按整点/半点刷新；同时维持 RTC 任务链。
+function KindleDash:armAutoRefresh(delay)
+    if self._auto_timer then UIManager:unschedule(self._auto_timer) end
+    if not self.auto_on then
+        self:cancelRtcWake()
+        return
+    end
+    local function tick()
+        if not self.auto_on then return end
+        if self.dash_widget and not self._suspended then
+            pcall(function() self:requestRefresh(true, false) end)
+        end
+        self:scheduleRtcWake()
+        local next_delay = self:nextDelay()
+        if next_delay < 30 then
+            next_delay = next_delay + (tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC)
+        end
+        UIManager:scheduleIn(next_delay, tick)
+    end
+    self._auto_timer = tick
+    local first = delay or self:nextDelay()
+    if first < 30 then
+        first = first + (tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC)
+    end
+    UIManager:scheduleIn(first, tick)
+    self:scheduleRtcWake()
+end
+
+function KindleDash:toggleAutoRefresh()
+    self.auto_on = not self.auto_on
+    self:setOption("auto_refresh", self.auto_on)
+    if self._auto_timer then UIManager:unschedule(self._auto_timer) end
+    if self.auto_on then
+        self:armAutoRefresh()
+        UIManager:show(InfoMessage:new{ text = self:tr("自动刷新: 开 (整点/半点)"), timeout = 2 })
+    else
+        self:cancelRtcWake()
+        UIManager:show(InfoMessage:new{ text = self:tr("自动刷新: 关"), timeout = 2 })
+    end
+end
+
+-- ---------------- 取图 ----------------
+
 function KindleDash:endpoints()
     local list = {}
     if self.host and self.host ~= "" then
@@ -257,169 +424,295 @@ function KindleDash:endpoints()
     return list
 end
 
--- 单个 URL 的取图。HTTPS 由 KOReader 定制版 socket.http 自动分派到 ssl.https，
--- 这里只额外指定 CA 与校验级别；绝不能传 create（会破坏 scheme 自动分派）。
-function KindleDash:tryFetch(url)
-    local https = url:sub(1, 8) == "https://"
-    local ok, body, code = pcall(function()
-        local chunks = {}
-        local request = {
-            url = url,
-            method = "GET",
-            sink = ltn12.sink.table(chunks),
-        }
-        if https then
-            if not self:fileExists(CA_BUNDLE) then
-                return nil, "missing CA bundle"
+-- 由图片 URL 推导清单（manifest）URL；返回 nil 表示该端点不支持清单协议。
+function KindleDash:manifestUrl(image)
+    if image:match("%.json$") then return image end
+    if image:match("/api/screen") then return image:gsub("/api/screen", "/api/display") end
+    if image:match("^https://shenliucn%-prog%.github%.io/shawn%-kanban/") then
+        if image:match("/screen%-en%.png$") then return image:gsub("screen%-en%.png$", "en/manifest.json") end
+        return image:gsub("screen.png$", "manifest.json")
+    end
+end
+
+local function resolve(base, value)
+    if type(value) ~= "string" then return nil end
+    if value:match("^https?://") then
+        if base:match("^https://") and not value:match("^https://") then return nil end
+        return value
+    end
+    if value:sub(1, 2) == "//" or value:find("..", 1, true) then return nil end
+    if value:sub(1, 1) == "/" then return base:match("^(https?://[^/]+)") .. value end
+    return base:match("^(.*)/") .. "/" .. value
+end
+
+-- 通用 HTTP GET（带大小上限 / 超时 / https CA 校验），返回 body 或 nil, err。
+function KindleDash:request(url, limit)
+    if not url:match("^https?://") then return nil, "Unsupported URL" end
+    local chunks, bytes = {}, 0
+    local req = {
+        url = url, method = "GET", redirect = false,
+        headers = { ["User-Agent"] = "ShawnKanban/" .. VERSION },
+        sink = function(chunk)
+            if chunk then
+                bytes = bytes + #chunk
+                if bytes > limit then return nil, "Response exceeds size limit" end
+                chunks[#chunks + 1] = chunk
             end
-            request.cafile = CA_BUNDLE
-            request.verify = "peer"
-            request.protocol = "tlsv1_2"
-        end
-        local success, status = http.request(request)
-        if not success then return nil, status end
-        return table.concat(chunks), tonumber(status)
-    end)
-    if not ok then
-        logger.warn("ShawnKanban fetch error", url, tostring(body))
-        return nil
+            return 1
+        end,
+    }
+    if url:match("^https://") then
+        local ca = caBundlePath(function(p) return self:fileExists(p) end)
+        if not ca then return nil, "CA bundle missing" end
+        req.cafile, req.verify, req.protocol = ca, "peer", "tlsv1_2"
     end
-    if not body or body == "" or code ~= 200 then
-        logger.warn("ShawnKanban fetch http", url, tostring(code))
-        return nil
+    local ok, result, status = pcall(http.request, req)
+    if not ok or not result or tonumber(status) ~= 200 then
+        return nil, "HTTP/network: " .. tostring(status or result)
     end
-    -- 服务端出错会返回 text/plain，必须确认拿到的是真 PNG，否则 ImageWidget 会炸
-    if body:sub(1, 4) ~= "\137PNG" then
-        logger.warn("ShawnKanban not a PNG", url, tostring(body):sub(1, 60))
-        return nil
-    end
-    return body
+    if bytes > limit then return nil, "Response exceeds size limit" end
+    return table.concat(chunks)
 end
 
+function KindleDash:readMetadata()
+    local f = io.open(self:cacheImg() .. ".json", "rb")
+    if not f then return {} end
+    local text = f:read("*a"); f:close()
+    local ok, value = pcall(JSON.decode, text)
+    return ok and type(value) == "table" and value or {}
+end
+
+-- 三级降级取图；返回 body, err, sourceName, unchanged。
 function KindleDash:fetchScreen()
-    local eps = self:endpoints()
-    if #eps == 0 then
-        return nil, self:tr("未配置任何图源")
-    end
-    local tried = {}
-    for _, ep in ipairs(eps) do
-        local data = self:tryFetch(ep.url)
-        if data then
-            return data, nil, ep.name
+    local sha = self.sha256
+    local failures = {}
+    for _, ep in ipairs(self:endpoints()) do
+        local manifest_url = self:manifestUrl(ep.url)
+        local meta, url = {}, ep.url
+        local error_message
+        if manifest_url then
+            local raw, err = self:request(manifest_url, 128 * 1024)
+            local ok, value = pcall(JSON.decode, raw or "")
+            if not ok or type(value) ~= "table" or value.schemaVersion ~= 1
+                or type(value.sha256) ~= "string" or not value.sha256:match("^%x+$") or #value.sha256 ~= 64
+                or type(value.generatedAt) ~= "number" or value.generatedAt <= 0
+                or value.generatedAt > os.time() * 1000 + 300000 then
+                error_message = err or "Invalid manifest"
+            else
+                meta = value
+                url = resolve(manifest_url, value.image_url)
+                if not url then error_message = "Invalid image URL" end
+            end
         end
-        table.insert(tried, ep.name)
+        if not error_message then
+            local old = self:readMetadata()
+            if meta.sha256 and old.sha256 == meta.sha256 and self:fileExists(self:cacheImg()) then
+                local f = io.open(self:cacheImg(), "rb")
+                local bytes = f and f:read(MAX_IMAGE + 1)
+                if f then f:close() end
+                if bytes and #bytes <= MAX_IMAGE and (not sha or sha(bytes) == meta.sha256) then
+                    self._candidate_meta = meta
+                    return bytes, nil, ep.name, true
+                end
+            end
+            local body, err = self:request(url, MAX_IMAGE)
+            if body and body:sub(1, 8) == "\137PNG\13\10\26\10" then
+                if not meta.sha256 or not sha or sha(body) == meta.sha256:lower() then
+                    if sha then meta.sha256 = sha(body) end
+                    meta.source = ep.name
+                    self._candidate_meta = meta
+                    return body, nil, ep.name, false
+                end
+                error_message = "Image checksum mismatch"
+            else
+                error_message = err or "Invalid PNG"
+            end
+        end
+        failures[#failures + 1] = ep.name .. ": " .. tostring(error_message)
     end
-    return nil, table.concat(tried, "/") .. self:tr(" 均不可用")
+    return nil, table.concat(failures, "; ")
 end
 
--- 保存 PNG 到文件（缓存目录持久化，Kindle 重启后仍在）
-function KindleDash:writePng(path, data)
+-- 校验并落盘 PNG（校验头、尺寸、与清单一致性），避免半张图 / 坏图。
+function KindleDash:writePng(path, bytes)
+    if not bytes or #bytes > MAX_IMAGE or #bytes < 33 then return nil, "Image size invalid" end
+    local function uint(offset)
+        local a, b, c, d = bytes:byte(offset, offset + 3)
+        return ((a * 256 + b) * 256 + c) * 256 + d
+    end
+    if bytes:sub(1, 8) ~= "\137PNG\13\10\26\10" or bytes:sub(13, 16) ~= "IHDR"
+        or uint(17) > 4096 or uint(21) > 4096 then
+        return nil, "Invalid PNG header"
+    end
     self:ensureCacheDir()
-    local f, err = io.open(path, "wb")
-    if not f then return nil, err end
-    f:write(data)
-    f:close()
+    local tmp = path .. ".pending"
+    local f = io.open(tmp, "wb")
+    if not f then return nil, "Cache open failed" end
+    local written = f:write(bytes)
+    local closed = f:close()
+    if not written or not closed then os.remove(tmp); return nil, "Cache write failed" end
+    local ok, buffer = pcall(RenderImage.renderImageFile, RenderImage, tmp, false)
+    if not ok or not buffer then os.remove(tmp); return nil, "Image decode failed" end
+    local w, h = buffer:getWidth(), buffer:getHeight()
+    buffer:free()
+    if w < 100 or h < 100 or w > 4096 or h > 4096 then os.remove(tmp); return nil, "Invalid dimensions" end
+    local meta = self._candidate_meta or {}
+    if (meta.width and meta.width ~= w) or (meta.height and meta.height ~= h) then
+        os.remove(tmp); return nil, "Manifest dimensions mismatch"
+    end
+    local renamed = os.rename(tmp, path)
+    if not renamed and self:fileExists(path) then
+        -- 设备是 Linux，rename 本就可原子覆盖；但 Windows/部分文件系统上 os.rename
+        -- 拒绝覆盖已有文件。只有"目标已存在且改名失败"才退化为先删后改，保住原子性。
+        os.remove(path)
+        renamed = os.rename(tmp, path)
+    end
+    if not renamed then os.remove(tmp); return nil, "Cache rename failed" end
+    meta.downloadedAt = os.time() * 1000
+    local mf = io.open(path .. ".json.tmp", "wb")
+    if mf then mf:write(JSON.encode(meta)); mf:close(); os.rename(path .. ".json.tmp", path .. ".json") end
     return true
 end
 
-function KindleDash:fileExists(path)
-    local f = io.open(path, "rb")
-    if f then f:close(); return true end
-    return false
-end
-
--- ---------- 显示 ----------
-function KindleDash:showDashboard(img_path, offline)
-    if self.dash_widget then
-        UIManager:close(self.dash_widget)
-        self.dash_widget = nil
-    end
-    -- 用 Screen 尺寸最稳；ui.dimen 在文件管理器/阅读器切换时可能不对
-    local w = Screen:getWidth()
-    local h = Screen:getHeight()
-    logger.info("ShawnKanban showDashboard screen=", w, "x", h, "img=", img_path)
-
-    -- 整块构建包 pcall：ImageWidget 解码/渲染抛错时只弹提示，绝不把 KOReader 打回桌面
-    local ok, err = pcall(function() self:buildScreen(img_path, w, h) end)
-    if not ok then
-        logger.err("ShawnKanban showDashboard failed: ", tostring(err))
-        UIManager:show(InfoMessage:new{
-            text = self:tr("看板显示失败:\n") .. tostring(err),
-            timeout = 8,
-        })
-    end
-end
+-- ---------------- 显示 ----------------
 
 function KindleDash:buildScreen(img_path, w, h)
-    local dash = self    -- container 回调里的 self 是 container，这里留个插件实例的引用
-    -- ImageWidget 满屏显示
-    -- file_do_cache=false: 切换图时强制重新解码；close 时 ImageWidget:free() 释放 BlitBuffer
+    local dash = self
     local img = ImageWidget:new{
         file = img_path,
         width = w,
         height = h,
-        scale_factor = 0,        -- 按 width/height 缩放填满（保持宽高比需 stretch_limit 或 align）
+        scale_factor = 0,
         file_do_cache = false,
     }
-    local container = InputContainer:new{
-        dimen = Geom:new{ w = w, h = h },
-    }
+    local container = InputContainer:new{ dimen = Geom:new{ w = w, h = h } }
     container[1] = img
-    -- 吃手势（防 KOReader 退出/翻页穿透）
+    -- 吃手势，防止 KOReader 的翻页/退出穿透到看板上。
     container.ges_events = {
         TapScroll = { GestureRange:new{ ges = "tap", range = function() return container.dimen end } },
         SwipeScroll = { GestureRange:new{ ges = "swipe", range = function() return container.dimen end } },
     }
     function container:onTapScroll(_, ges)
         -- 顶部 10% 区域点击 = 退出（Kindle 无 Back 键，靠此关闭看板）
-        if ges and ges.pos and ges.pos.y < h * 0.1 then
-            container:onClose()
-        end
+        if ges and ges.pos and ges.pos.y < h * 0.1 then self:onClose() end
         return true
     end
     function container:onSwipeScroll(_, ges)
         -- 顶部 25% 下滑 = 退出
-        if ges and ges.pos and ges.direction == "south" and ges.pos.y < h * 0.25 then
-            container:onClose()
-        end
+        if ges and ges.pos and ges.direction == "south" and ges.pos.y < h * 0.25 then self:onClose() end
         return true
     end
     function container:onClose()
-        dash.dash_widget = nil      -- 先标记已关闭，否则后台刷新会误判成"看板正显示"
-        dash:holdAwake(false)
+        dash.dash_widget = nil
         UIManager:close(self)
         return true
     end
     function container:onBack()
         dash.dash_widget = nil
-        dash:holdAwake(false)
         UIManager:close(self)
         return true
     end
     function container:onResume()
-        -- 唤醒即刷
         dash:onResume()
         return true
     end
+    function container:onSuspend()
+        dash:onSuspend()
+        return true
+    end
     self.dash_widget = container
-    -- 看板显示期间不挂起，整点/半点的定时刷新才可能真正触发
-    dash:holdAwake(true)
     UIManager:show(container)
 end
 
--- ---------- 刷新（含离线缓存兜底） ----------
--- 菜单入口：任何异常都收敛成提示，避免把 KOReader 打回桌面
-function KindleDash:safeRefresh()
-    local ok, err = pcall(function() self:refreshDashboard(false, true) end)   -- 用户主动：必须显示看板
+function KindleDash:showDashboard(path, offline)
+    local previous = self.dash_widget
+    if previous then UIManager:close(previous); self.dash_widget = nil end
+    local ok, err = pcall(function() self:buildScreen(path, Screen:getWidth(), Screen:getHeight()) end)
     if not ok then
-        logger.err("ShawnKanban refresh crashed: ", tostring(err))
-        UIManager:show(InfoMessage:new{ text = self:tr("看板失败:\n") .. tostring(err), timeout = 8 })
+        self.dash_widget = previous
+        self._last_error = "Display failed: " .. tostring(err)
+        self:record("display_failed", self._last_error)
+        UIManager:show(InfoMessage:new{ text = self:tr("看板显示失败:\n") .. tostring(err), timeout = 8 })
+        return false
     end
+    return true
 end
 
--- manual=true 表示用户主动打开（点菜单）；false 表示定时/唤醒的后台刷新。
--- 后台刷新不应把已关闭的看板弹回来，但用户主动点就必须显示——
--- 首次打开时 dash_widget 本来就是 nil，不能拿它判断"用户想不想看"。
+local function fmtTime(t)
+    return t and os.date("%Y-%m-%d %H:%M:%S", t) or "—"
+end
+
+function KindleDash:showStatus()
+    local m = self:readMetadata()
+    local age = m.generatedAt and math.max(0, math.floor((os.time() * 1000 - m.generatedAt) / 60000))
+    local text = self:label("Device status", "设备状态") .. " · " .. VERSION .. "\n"
+        .. self:label("Screen: ", "屏幕：") .. Screen:getWidth() .. " × " .. Screen:getHeight() .. "\n"
+        .. self:label("RTC wake: ", "RTC 唤醒：") .. (Device.wakeup_mgr and self:label("available", "可用") or self:label("unavailable", "不可用")) .. "\n"
+        .. self:label("Source: ", "图源：") .. tostring(self._source or m.source or "—") .. "\n"
+        .. self:label("Content generated: ", "内容生成：") .. fmtTime(m.generatedAt and m.generatedAt / 1000) .. "\n"
+        .. self:label("Cloud state: ", "云端状态：") .. tostring(m.state or "Unknown / 未知") .. "\n"
+        .. self:label("Freshness: ", "新鲜度：") .. (not age and self:label("Unknown", "未知") or age > 45 and self:label("Stale", "已过期") or self:label("Within 45 minutes", "45分钟内")) .. "\n"
+        .. self:label("Age (min): ", "内容年龄（分钟）：") .. tostring(age or "Unknown / 未知") .. "\n"
+        .. self:label("Downloaded: ", "下载时间：") .. fmtTime(m.downloadedAt and m.downloadedAt / 1000) .. "\n"
+        .. self:label("Last attempt: ", "最近尝试：") .. fmtTime(self._last_attempt) .. "\n"
+        .. self:label("Next attempt: ", "下次尝试：") .. fmtTime(self._next_attempt) .. "\n"
+        .. self:label("Last error: ", "最近错误：") .. tostring(self._last_error or "—") .. "\n"
+        .. self:label("Health log: settings/kindledash-health.json", "诊断记录：settings/kindledash-health.json")
+    UIManager:show(InfoMessage:new{ text = text })
+end
+
+-- ---------------- 刷新流程 ----------------
+
+-- Kindle 空闲会自动关 WiFi，RTC 唤醒后通常也没网。取图前先确保网络可用，
+-- 否则只会一直显示"离线"。受管 WiFi：需要时才开，超时后关掉自己开的 WiFi。
+local NetworkMgr
+
+function KindleDash:networkMgr()
+    if NetworkMgr ~= nil then return NetworkMgr end
+    local ok, mod = pcall(require, "ui/network/manager")
+    if ok and mod then NetworkMgr = mod end
+    return NetworkMgr
+end
+
+-- 返回 true 表示现在就能取图（已同步调用 on_ready 或无需等待）；
+-- 返回 false 表示已安排超时/回调，稍后由它们继续。
+function KindleDash:prepareNetwork(on_ready)
+    local net = self:networkMgr()
+    if not net or not self:option("managed_wifi", true) then return true end
+    if net:isConnected() then return true end
+    if self._network_deadline then
+        UIManager:unschedule(self._network_deadline)
+        self._network_deadline = nil
+    end
+    local settled = false
+    local function settle(ok)
+        if settled then return end
+        settled = true
+        if self._network_deadline then
+            UIManager:unschedule(self._network_deadline)
+            self._network_deadline = nil
+        end
+        if ok then
+            on_ready()
+            return
+        end
+        -- 超时：放弃本次，顺手关掉自己开的 WiFi，然后退避重试。
+        if self:option("wifi_off", true) then pcall(function() net:disableWifi() end) end
+        self._busy = false
+        self._failures = (self._failures or 0) + 1
+        self._last_error = "Network timeout"
+        self:record("network_timeout")
+        self:armAutoRefresh(self:retryDelay())
+    end
+    self._network_deadline = function() settle(false) end
+    UIManager:scheduleIn(60, self._network_deadline)
+    local ok = pcall(function()
+        net:turnOnWifiAndWaitForConnection(function() settle(true) end)
+    end)
+    if not ok then settle(false) end
+    return false
+end
+
 function KindleDash:refreshDashboard(silent, manual)
     if self._suspended then return false end
     local data, err, source, unchanged = self:fetchScreen()
@@ -462,7 +755,7 @@ function KindleDash:refreshDashboard(silent, manual)
 
     -- 后台刷新且看板没在显示：只默默更新缓存，别把看板弹回来（下次打开即是最新）
     if not showing and not manual then
-        logger.info("ShawnKanban bg refresh ok source=", source, " 看板未显示, 仅更新缓存")
+        logger.info("ShawnKanban bg refresh ok source=", source)
         return true
     end
 
@@ -472,24 +765,57 @@ function KindleDash:refreshDashboard(silent, manual)
         return false
     end
     if not silent and source == self:tr("云端") then
-        -- 电脑没开时走的正是这条路，明确告诉用户数据来自云端
         UIManager:show(InfoMessage:new{ text = self:tr("来自云端（电脑未连上）"), timeout = 2 })
     end
     return true
 end
 
+-- 带防重入的刷新入口（UI 定时器 / RTC / 用户操作共用）。
+-- 无论走哪条分支，_busy 一定会被释放，否则自动刷新会永久停摆。
+function KindleDash:requestRefresh(silent, manual)
+    if self._busy or self._suspended then return end
+    self._busy = true
+    self._last_attempt = os.time()
+    local generation = (self._generation or 0) + 1
+    self._generation = generation
+    local function settle(ok, err)
+        self._busy = false
+        if generation ~= self._generation then return end
+        if ok then self._last_error = nil else self._last_error = tostring(err or "Refresh failed") end
+        self._failures = ok and 0 or (self._failures or 0) + 1
+        self:record(ok and "download_verified" or "refresh_failed", self._last_error)
+        if ok then self:armAutoRefresh() else self:armAutoRefresh(self:retryDelay()) end
+    end
+    local function proceed()
+        if generation ~= self._generation or self._suspended then self._busy = false; return end
+        local ok, result = pcall(self.refreshDashboard, self, silent, manual)
+        settle(ok and result, ok and self._fetch_error or result)
+    end
+    if self:prepareNetwork(proceed) then proceed() end
+end
+
+-- 菜单入口：任何异常都收敛成提示，避免把 KOReader 打回桌面。
+function KindleDash:safeRefresh()
+    local ok, err = pcall(function() self:requestRefresh(false, true) end)
+    if not ok then
+        logger.err("ShawnKanban refresh crashed: ", tostring(err))
+        UIManager:show(InfoMessage:new{ text = self:tr("看板失败:\n") .. tostring(err), timeout = 8 })
+    end
+end
+
+-- ---------------- 生命周期 ----------------
+
 function KindleDash:onSuspend()
     self._suspended = true
-    if self._awake_tick then UIManager:unschedule(self._awake_tick) end
     if self._resume_tick then UIManager:unschedule(self._resume_tick) end
+    if self._auto_timer then UIManager:unschedule(self._auto_timer) end
+    -- 确保 RTC 任务在设备真正入睡前已注册，醒来后能按点刷新。
+    self:scheduleRtcWake()
+    self:record("suspend")
 end
 
 function KindleDash:onResume()
     self._suspended = false
-    if self._awake_tick then
-        UIManager:unschedule(self._awake_tick)
-        self._awake_tick()
-    end
     if self._resume_tick then UIManager:unschedule(self._resume_tick) end
     local attempts = 0
     self._resume_tick = function()
@@ -500,57 +826,51 @@ function KindleDash:onResume()
             UIManager:scheduleIn(attempts == 1 and 15 or 40, self._resume_tick)
         end
     end
-    -- Wi-Fi restoration is asynchronous after resume.
+    -- Wi-Fi 恢复是异步的，稍等再刷。
     UIManager:scheduleIn(5, self._resume_tick)
     self:armAutoRefresh()
+    self:record("resume")
 end
 
 function KindleDash:onCloseWidget()
     self.auto_on = false
     if self._auto_timer then UIManager:unschedule(self._auto_timer) end
     if self._resume_tick then UIManager:unschedule(self._resume_tick) end
-    self:holdAwake(false)
-end
-
--- ---------- 自动刷新（对齐整点/半点） ----------
-local function secondsToNextSlot()
-    local t = os.date("*t")
-    local mins = t.min
-    local target = mins < 30 and 30 or 60
-    return (target - mins) * 60 - t.sec
-end
-
-function KindleDash:armAutoRefresh()
-    if self._auto_timer then UIManager:unschedule(self._auto_timer) end
-    if not self.auto_on then return end
-    local function tick()
-        if not self.auto_on then return end
-        -- 定时器里出错也必须续上下一次，且不能崩
-        if self.dash_widget and not self._suspended then
-            pcall(function() self:refreshDashboard(true, false) end)
-        end
-        -- 每次都按整点/半点重新对齐：用固定间隔会因刷新耗时而累积漂移
-        local delay = secondsToNextSlot()
-        if delay < 30 then delay = delay + REFRESH_SEC end
-        UIManager:scheduleIn(delay, tick)
+    if self._network_deadline then
+        UIManager:unschedule(self._network_deadline)
+        self._network_deadline = nil
     end
-    local first = secondsToNextSlot()
-    if first < 30 then first = first + REFRESH_SEC end
-    self._auto_timer = tick
-    UIManager:scheduleIn(first, tick)
-end
-function KindleDash:toggleAutoRefresh()
-    self.auto_on = not self.auto_on
-    if self._auto_timer then UIManager:unschedule(self._auto_timer) end
-    if self.auto_on then
-        self:armAutoRefresh()
-        UIManager:show(InfoMessage:new{ text = self:tr("自动刷新: 开 (整点/半点)"), timeout = 2 })
-    else
-        UIManager:show(InfoMessage:new{ text = self:tr("自动刷新: 关"), timeout = 2 })
-    end
+    self:cancelRtcWake()
 end
 
--- ---------- 菜单 ----------
+function KindleDash:init()
+    self.language = self:loadLanguage()
+    self.auto_on = self:option("auto_refresh", true)
+    self.host = self:loadHost()
+    self.cloud = self:loadCloud()
+    self.dash_widget = nil
+    self._auto_timer = nil
+    self._resume_tick = nil
+    self._rtc_task = nil
+    self._deferred = nil
+    self._network_deadline = nil
+    self._suspended = false
+    self._busy = false
+    self._last_ok = false
+    self._offline = false
+    self._source = nil
+    local f = io.open(self:cacheDir() .. "/kindledash-health.json", "rb")
+    if f then
+        local raw = f:read("*a"); f:close()
+        local ok, value = pcall(JSON.decode, raw)
+        if ok and type(value) == "table" then self._health_history = value end
+    end
+    self:armAutoRefresh()
+    self.ui.menu:registerToMainMenu(self)
+end
+
+-- ---------------- 设置对话框 ----------------
+
 function KindleDash:setServerAddress()
     local dialog
     dialog = InputDialog:new{
@@ -567,9 +887,9 @@ function KindleDash:setServerAddress()
                         UIManager:close(dialog)
                         UIManager:show(InfoMessage:new{ text = self:tr("已保存: ") .. v, timeout = 2 })
                     end
-                end }
-            }
-        }
+                end },
+            },
+        },
     }
     UIManager:show(dialog)
 end
@@ -589,14 +909,84 @@ function KindleDash:setCloudUrl()
                     self:saveCloud(v)
                     UIManager:close(dialog)
                     UIManager:show(InfoMessage:new{
-                        text = v == "" and self:tr("已清空云端地址") or self:tr("已保存: ") .. v, timeout = 3
+                        text = v == "" and self:tr("已清空云端地址") or self:tr("已保存: ") .. v, timeout = 3,
                     })
-                end }
-            }
-        }
+                end },
+            },
+        },
     }
     UIManager:show(dialog)
 end
+
+function KindleDash:setupWizard()
+    local dialog
+    dialog = InputDialog:new{
+        title = self:tr("设置：图片或清单地址"),
+        description = self:tr("使用自己的图源或内置示例。城市、时区和布局在生成端配置。保存后测试图片。"),
+        input = self.cloud or "",
+        buttons = {
+            {
+                { text = self:tr("取消"), callback = function() UIManager:close(dialog) end },
+                { text = self:tr("保存并测试"), callback = function()
+                    local v = dialog:getInputValue() or ""
+                    if v:match("^https?://") then
+                        self:saveCloud(v)
+                        self:setOption("setup_complete", true)
+                        UIManager:close(dialog)
+                        self:safeRefresh()
+                    end
+                end },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function KindleDash:editInterval()
+    local dialog
+    dialog = InputDialog:new{
+        title = self:tr("刷新间隔（分钟，5–1440）"),
+        input = tostring((self:option("interval", REFRESH_SEC)) / 60),
+        buttons = {
+            {
+                { text = self:tr("取消"), callback = function() UIManager:close(dialog) end },
+                { text = self:tr("保存"), callback = function()
+                    local n = tonumber(dialog:getInputValue())
+                    if n and n >= 5 and n <= 1440 then
+                        self:setOption("interval", math.floor(n) * 60)
+                        UIManager:close(dialog)
+                        self:armAutoRefresh()
+                    end
+                end },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function KindleDash:rtcExperiment()
+    local Confirm = require("ui/widget/confirmbox")
+    if not Device.wakeup_mgr or not Device.canSuspend or not Device:canSuspend() then
+        UIManager:show(InfoMessage:new{ text = self:tr("此设备不支持 RTC 唤醒接口。") })
+        return
+    end
+    UIManager:show(Confirm:new{
+        text = self:tr("实验：休眠一次并尝试在2分钟后唤醒。请确保可按电源键恢复。不会开启循环休眠。"),
+        ok_callback = function()
+            if self._rtc_test then Device.wakeup_mgr:removeTasks(nil, self._rtc_test) end
+            self._rtc_test = function()
+                self._suspended = false
+                self:record("rtc_alarm_fired")
+                self:onResume()
+            end
+            Device.wakeup_mgr:addTask(120, self._rtc_test)
+            self:record("rtc_test_started")
+            UIManager:suspend()
+        end,
+    })
+end
+
+-- ---------------- 菜单 ----------------
 
 function KindleDash:addToMainMenu(menu_items)
     menu_items["0kindledash"] = {
@@ -609,24 +999,25 @@ function KindleDash:addToMainMenu(menu_items)
                 { text = "中文", checked_func = function() return self.language == "zh" end,
                   callback = function() self:setLanguage("zh") end },
             } },
-            { text = self:tr("刷新看板"),     callback = function() self:safeRefresh() end },
+            { text = self:tr("刷新看板"), callback = function() self:safeRefresh() end },
             { text = self:tr("设置局域网服务器"), callback = function() self:setServerAddress() end },
             { text = self:tr("设置云端图地址"), callback = function() self:setCloudUrl() end },
             { text = self:tr("切换自动刷新 (整点/半点)"), callback = function() self:toggleAutoRefresh() end },
+            { text = self:tr("设置：图片或清单地址"), callback = function() self:setupWizard() end },
+            { text = self:tr("设备状态"), callback = function() self:showStatus() end },
+            { text = self:tr("刷新间隔"), callback = function() self:editInterval() end },
+            { text = self:tr("实验：单次 RTC 唤醒测试"), callback = function() self:rtcExperiment() end },
             { text = self:tr("关于"), callback = function()
                 UIManager:show(InfoMessage:new{
-                    text = self:tr("Shawn Kanban\n取图顺序：局域网 PC > 云端 Pages > 本地缓存\n")
-                       .. self:tr("云端每半小时触发 GitHub Actions 渲染\n")
+                    text = self:tr("Shawn Kanban v0.3.0\n取图顺序：局域网 PC > 云端 Pages > 本地缓存\n")
+                       .. self:tr("每半小时 RTC 唤醒刷新，设备平时正常休眠\n")
                        .. self:tr("AI 额度走局域网实时，关机显示最后值\n")
-                       .. self:tr("唤醒即刷 + 30 分自动\n顶部下滑/顶部点击返回"),
-                    timeout = 6
+                       .. self:tr("顶部下滑/顶部点击返回看板退出"),
+                    timeout = 6,
                 })
-            end }
-        } end
+            end },
+        } end,
     }
 end
 
--- 需要 GestureRange（KOReader 顶部全局已 require 过？保险起见 require）
-local plugin_dir = debug.getinfo(1, "S").source:match("^@(.*/)")
-if plugin_dir then dofile(plugin_dir .. "runtime.lua")(KindleDash, plugin_dir) end
 return KindleDash

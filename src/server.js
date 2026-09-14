@@ -1,5 +1,7 @@
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { buildDashboard } from './aggregator.js';
@@ -7,22 +9,62 @@ import { readStatus } from './db.js';
 import { config } from './config.js';
 
 const imageCache = new Map();
-const PYTHON = process.env.PYTHON_BIN
-  || (process.platform === 'win32'
-    ? 'C:/Users/Shen/.workbuddy/binaries/python/versions/3.13.12/python.exe'
-    : 'python3');
+
+// 渲染要 Pillow。系统 python 和 WorkBuddy 自带的"裸"解释器通常都没有装，
+// 所以运行时挑一个真的能 `import PIL` 的解释器，而不是把路径写死
+// （写死到某个用户名下既不可移植，也会把本机用户名带进公开仓库）。
+function pythonCandidates() {
+  const home = process.env.USERPROFILE || process.env.HOME || os.homedir();
+  const wb = path.join(home, '.workbuddy', 'binaries', 'python');
+  const venvBin = process.platform === 'win32'
+    ? path.join('Scripts', 'python.exe')
+    : path.join('bin', 'python');
+  const list = [];
+  if (process.env.PYTHON_BIN) list.push(process.env.PYTHON_BIN);
+  list.push(path.join(import.meta.dirname, '..', '.venv', venvBin));
+  list.push(path.join(wb, 'envs', 'default', venvBin));
+  try {
+    for (const v of readdirSync(path.join(wb, 'versions'))) {
+      list.push(path.join(wb, 'versions', v, 'python.exe'));
+    }
+  } catch { /* 没有这个目录，退到下面的通用命令名 */ }
+  list.push(process.platform === 'win32' ? 'python' : 'python3', 'python');
+  return list;
+}
+
+function hasPillow(bin) {
+  try {
+    execFileSync(bin, ['-c', 'import PIL'], { stdio: 'ignore', timeout: 20000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let pythonBin;
+// 惰性解析：只有真的要渲染时才去探测，别拖慢启动和单测。
+export function renderPython() {
+  if (pythonBin === undefined) {
+    const candidates = pythonCandidates();
+    pythonBin = candidates.find(hasPillow) || candidates[candidates.length - 1];
+    console.log('[dash] renderer python: ' + pythonBin);
+  }
+  return pythonBin;
+}
 
 function renderScreenPng(language = 'zh', port = 8787) {
   return new Promise((resolve, reject) => {
     const script = path.join(import.meta.dirname, '..', 'tools', 'render_screen.py');
-    const child = spawn(PYTHON, [script, '--lang', language, '--url', 'http://127.0.0.1:' + port + '/api/dashboard'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 90000 });
+    const child = spawn(renderPython(), [script, '--lang', language, '--url', 'http://127.0.0.1:' + port + '/api/dashboard'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 90000 });
     const chunks = [];
+    const errs = [];
     child.stdout.on('data', d => chunks.push(d));
-    child.stderr.on('data', d => process.stderr.write('[render] ' + d));
+    child.stderr.on('data', d => { errs.push(d); process.stderr.write('[render] ' + d); });
     child.on('error', reject);
     child.on('close', code => {
-      if (code === 0) resolve(Buffer.concat(chunks));
-      else reject(new Error('render exit code ' + code));
+      if (code === 0) return resolve(Buffer.concat(chunks));
+      const detail = Buffer.concat(errs).toString().trim().split('\n').slice(-3).join(' | ');
+      reject(new Error('render exit code ' + code + (detail ? ': ' + detail : '')));
     });
   });
 }

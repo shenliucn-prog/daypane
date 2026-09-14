@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0
+
+- Merged the `runtime.lua` overlay into `main.lua`. The old dual-layer plugin was loaded as
+  `main.lua` + `dofile('runtime.lua')`, so `runtime.lua` silently redefined `fetchScreen`,
+  `armAutoRefresh`, `onResume`, `holdAwake` and `init`; roughly half of `main.lua` was dead code
+  and edits there had no effect. The plugin is now a single implementation.
+- Fixed: waking the device with the power key could leave the dashboard unclosable until reboot.
+  `onResume` used to call `power.resetT1Timeout()` (Kindle `powerd` native) synchronously at the
+  suspend/resume boundary, which deadlocked the UI event loop.
+- Fixed: the dashboard never auto-refreshed while idle. `holdAwake` relied on
+  `PluginShare.pause_auto_suspend` + `resetT1Timeout`, which do not stop firmware screen savers on
+  Kindle; the device suspended anyway and `UIManager:scheduleIn` timers stop while suspended.
+  Those hacks are gone.
+- Auto-refresh now uses RTC wake: the device sleeps normally and `Device.wakeup_mgr:addTask()`
+  wakes it once per interval to refresh and re-arm the next wake. No always-on, no screen saver fight.
+- HTTPS CA bundle is now resolved at `<datadir>/data/ca-bundle.crt` with a fallback, instead of the
+  wrong `<datadir>/ca-bundle.crt`. The previous path made every cloud fetch fail with
+  "CA bundle missing".
+- `requestRefresh` always releases its re-entrancy lock, so a skipped background refresh can no
+  longer stop auto-refresh permanently.
+- Restored managed Wi-Fi (`managed_wifi` / `wifi_off`) before each fetch with a 60-second deadline,
+  since a Kindle that wakes from RTC wake usually has Wi-Fi off.
+
 ## 0.2.0
 
 - Versioned display manifests and SHA-256 verification, bounded downloads and decode-before-replace caches.

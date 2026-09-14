@@ -1,6 +1,6 @@
 {
   "name": "kindle-assistant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cross-platform (Windows/macOS) data service that turns a jailbroken Kindle into an e-ink assistant dashboard: WorkBuddy / Claude Code / Codex quotas, weather, US & A-share markets, world clocks and FX — served over LAN to the KOReader KindleDash plugin.",
   "type": "module",
   "main": "src/index.js",

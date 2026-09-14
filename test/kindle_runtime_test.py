@@ -8,35 +8,8 @@ from PIL import Image
 import kindle_plugin_test as harness
 
 lua = harness.lua
-lua.execute('''
-unpack=table.unpack
-package.preload['bit']=function()
-    local function signed(x) x=x & 0xffffffff;return x>=0x80000000 and x-0x100000000 or x end
-    return {tobit=signed,band=function(a,b) return signed(a & b) end,
-        bxor=function(a,b,c) local n=a ~ b;if c then n=n ~ c end;return signed(n) end,
-        bnot=function(a) return signed(~a) end,rshift=function(a,n) return (a & 0xffffffff)>>n end,
-        ror=function(a,n) a=a & 0xffffffff;return signed((a>>n)|(a<<(32-n))) end,
-        tohex=function(a) return string.format('%08x',a & 0xffffffff) end}
-end
-package.preload['json']=function() return {
-    decode=function(raw) if raw=='manifest' then return TEST_META end;error('bad JSON') end,
-    encode=function() return '{}' end} end
-require('device').screen.getWidth=function() return 1072 end
-require('device').screen.getHeight=function() return 1448 end
-NET={connected=true,on=true}
-function NET:isConnected() return self.connected end
-function NET:isWifiOn() return self.on end
-function NET:turnOnWifiAndWaitForConnection(cb) self.callback=cb end
-function NET:disableWifi() self.disabled=true end
-package.preload['ui/network/manager']=function() return NET end
-package.preload['ui/renderimage']=function() return {renderImageFile=function()
-    if DECODE_FAIL then return nil end
-    return {getWidth=function() return 1072 end,getHeight=function() return 1448 end,free=function() end}
-end} end
-''')
-root = Path(__file__).resolve().parents[1]
-lua.globals().PLUGIN_DIR = str(root / 'KindleDash.koplugin') + '/'
-lua.execute("dofile(PLUGIN_DIR..'runtime.lua')(Plugin,PLUGIN_DIR); SHA=dofile(PLUGIN_DIR..'sha256.lua')")
+lua.execute("SHA=dofile(PLUGIN_DIR..'sha256.lua'); Plugin.sha256=SHA")
+
 
 class RuntimeTests(unittest.TestCase):
     def test_sha256_known_vectors(self):
@@ -68,6 +41,7 @@ class RuntimeTests(unittest.TestCase):
             f=io.open(CACHE,'rb');assert(f:read('*a')==PNG);f:close()
             assert(not d:writePng(CACHE,'bad image'))
             ''')
+        lua.globals().DECODE_FAIL = False
 
     def test_network_deadline_backoff_and_success_reset(self):
         lua.execute('''

@@ -13,5 +13,5 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(first,p.read_bytes())
             self.assertIn(hashlib.sha256(first).hexdigest(),(out/'SHA256SUMS').read_text())
             with zipfile.ZipFile(p) as z:
-                self.assertTrue({'KindleDash.koplugin/main.lua','KindleDash.koplugin/runtime.lua','KindleDash.koplugin/sha256.lua'} <= set(z.namelist()))
+                self.assertTrue({'KindleDash.koplugin/main.lua','KindleDash.koplugin/sha256.lua'} <= set(z.namelist()))
                 self.assertFalse(any('settings' in n or 'quotas.json' in n for n in z.namelist()))

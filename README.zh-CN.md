@@ -103,7 +103,7 @@ npm ci
 npm run lint
 npm test
 python -m pip install lupa Pillow
-python tools/check_lua.py KindleDash.koplugin/main.lua KindleDash.koplugin/runtime.lua KindleDash.koplugin/sha256.lua
+python tools/check_lua.py KindleDash.koplugin/main.lua KindleDash.koplugin/sha256.lua
 python -m unittest discover -s test -p "*_test.py"
 ```
 
