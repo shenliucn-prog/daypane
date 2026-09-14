@@ -43,7 +43,7 @@ local JSON = require("json")
 -- 网络请求超时：电脑关机时不要让用户等太久，8 秒无响应就切换下一级。
 http.TIMEOUT = 8
 
-local VERSION = "0.3.0"
+local VERSION = "0.3.1"
 local REFRESH_SEC = 30 * 60
 local MAX_IMAGE = 4 * 1024 * 1024
 local DEFAULT_HOST = ""
@@ -142,7 +142,6 @@ local EN = {
     ["此设备不支持 RTC 唤醒接口。"] = "RTC wake is unavailable on this device.",
     ["实验：休眠一次并尝试在2分钟后唤醒。请确保可按电源键恢复。不会开启循环休眠。"] = "Experimental: sleep once and attempt a wake in 2 minutes. Keep the power button accessible. This does not enable recurring sleep.",
     ["关于"] = "About",
-    ["Shawn Kanban v0.3.0\n取图顺序：局域网 PC > 云端 Pages > 本地缓存\n"] = "Shawn Kanban v0.3.0\nImage sources: LAN > Cloud > Cache\n",
     ["每半小时 RTC 唤醒刷新，设备平时正常休眠\n"] = "RTC wake every half hour; the device sleeps normally in between\n",
     ["AI 额度走局域网实时，关机显示最后值\n"] = "AI activity estimates may retain old values offline\n",
     ["顶部下滑/顶部点击返回看板退出"] = "Tap / swipe down from the top to exit",
@@ -237,13 +236,22 @@ function KindleDash:loadHost()
     return host
 end
 function KindleDash:saveHost(host)
+    host = tostring(host or ""):match("^%s*(.-)%s*$") or ""
     local ok, s = pcall(function() return LuaSettings:open(self:settingsPath()) end)
     if ok and s then
-        s:saveSetting("host", host)
-        local h, p = host:match("^(.-):(%d+)$")
-        if h and p then
-            s:saveSetting("host", h)
-            s:saveSetting("port", p)
+        if host == "" then
+            s:saveSetting("host", "")
+        else
+            local h, p = host:match("^(.-):(%d+)$")
+            if h and p then
+                s:saveSetting("host", h)
+                s:saveSetting("port", p)
+            else
+                -- 用户只填了 IP：补上当前端口，否则本次会话会去连 80 端口，
+                -- 一直失败到重启后 loadHost 才修正。
+                s:saveSetting("host", host)
+                host = host .. ":" .. (s:readSetting("port") or DEFAULT_PORT)
+            end
         end
         s:flush()
     end
@@ -297,10 +305,16 @@ function KindleDash:retryDelay()
     return math.min(1800, 60 * 2 ^ math.min((self._failures or 1) - 1, 5))
 end
 
--- 到下一个整点/半点的秒数（REFRESH_SEC 可配置，默认 30 分钟）。
-function KindleDash:nextDelay()
+-- 刷新间隔（秒）。所有调度入口都必须走这里，否则不同函数钳制不一致，
+-- 会出现"定时器按 5 分钟算、RTC 按 60 秒算"的错位。
+function KindleDash:intervalSec()
     local interval = tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC
-    interval = math.max(300, math.min(86400, interval))
+    return math.max(300, math.min(86400, interval))
+end
+
+-- 到下一个整点/半点的秒数（间隔可配置，默认 30 分钟）。
+function KindleDash:nextDelay()
+    local interval = self:intervalSec()
     if self:option("night_mode", false) then
         local hour = os.date("*t").hour
         if hour >= 23 or hour < 7 then interval = math.max(interval, 7200) end
@@ -336,9 +350,19 @@ function KindleDash:scheduleRtcWake()
         return
     end
     local mgr = Device.wakeup_mgr
-    if not mgr then return end
+    if not mgr then
+        -- Kindle 上 wakeup_mgr 由 KindlePowerD:initWakeupMgr() 创建，需要 lipc 可用
+        -- 且设备支持屏保。没有它就退化成"只有醒着才刷新"——必须留下证据，
+        -- 否则"不自动刷新"会再次变成无迹可循的静默故障。
+        if not self._rtc_warned then
+            self._rtc_warned = true
+            logger.warn("ShawnKanban: no RTC wakeup manager; auto-refresh only runs while awake")
+            self:record("rtc_unavailable")
+        end
+        return
+    end
     if Device.canSuspend and not Device:canSuspend() then return end
-    local interval = tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC
+    local interval = self:intervalSec()
     local delay = self:nextDelay()
     if delay < 30 then delay = delay + interval end
     if self._rtc_task then
@@ -347,6 +371,7 @@ function KindleDash:scheduleRtcWake()
     end
     self._rtc_task = function()
         self._suspended = false
+        self:record("rtc_wake_fired")
         -- ⚠️ WakeupMgr:wakeupAction() 会在本回调返回后立刻 removeTask(1)。
         -- 如果在这里同步重排任务，新任务会排到队首、被那次 removeTask 一并删掉，
         -- 唤醒链当场断掉（之后每次唤醒都变成"no tasks"而静默失效）。
@@ -383,16 +408,12 @@ function KindleDash:armAutoRefresh(delay)
         end
         self:scheduleRtcWake()
         local next_delay = self:nextDelay()
-        if next_delay < 30 then
-            next_delay = next_delay + (tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC)
-        end
+        if next_delay < 30 then next_delay = next_delay + self:intervalSec() end
         UIManager:scheduleIn(next_delay, tick)
     end
     self._auto_timer = tick
     local first = delay or self:nextDelay()
-    if first < 30 then
-        first = first + (tonumber(self:option("interval", REFRESH_SEC)) or REFRESH_SEC)
-    end
+    if first < 30 then first = first + self:intervalSec() end
     UIManager:scheduleIn(first, tick)
     self:scheduleRtcWake()
 end
@@ -544,7 +565,11 @@ function KindleDash:writePng(path, bytes)
         return nil, "Invalid PNG header"
     end
     self:ensureCacheDir()
-    local tmp = path .. ".pending"
+    -- 临时文件必须唯一：UI 定时器 / RTC / resume 可能并发触发两次刷新，
+    -- 若共用同一个 .pending，后写的那个会继续往已被 rename 走的文件里追加字节，
+    -- 缓存图直接损坏（而且损坏会被持久化，之后一直显示坏图）。
+    self._write_seq = (self._write_seq or 0) + 1
+    local tmp = path .. ".pending." .. tostring(self._write_seq)
     local f = io.open(tmp, "wb")
     if not f then return nil, "Cache open failed" end
     local written = f:write(bytes)
@@ -681,7 +706,9 @@ end
 
 -- 返回 true 表示现在就能取图（已同步调用 on_ready 或无需等待）；
 -- 返回 false 表示已安排超时/回调，稍后由它们继续。
-function KindleDash:prepareNetwork(on_ready)
+-- 这里只管网络，不碰 _busy / 重试——那些由调用方按 generation 决定，
+-- 否则被抢占的旧刷新会把新刷新的状态一起清掉。
+function KindleDash:prepareNetwork(on_ready, on_fail)
     local net = self:networkMgr()
     if not net or not self:option("managed_wifi", true) then return true end
     if net:isConnected() then return true end
@@ -701,13 +728,9 @@ function KindleDash:prepareNetwork(on_ready)
             on_ready()
             return
         end
-        -- 超时：放弃本次，顺手关掉自己开的 WiFi，然后退避重试。
+        -- 超时：放弃本次，顺手关掉自己开的 WiFi，然后交给调用方退避重试。
         if self:option("wifi_off", true) then pcall(function() net:disableWifi() end) end
-        self._busy = false
-        self._failures = (self._failures or 0) + 1
-        self._last_error = "Network timeout"
-        self:record("network_timeout")
-        self:armAutoRefresh(self:retryDelay())
+        on_fail()
     end
     self._network_deadline = function() settle(false) end
     UIManager:scheduleIn(60, self._network_deadline)
@@ -778,25 +801,40 @@ end
 -- 带防重入的刷新入口（UI 定时器 / RTC / 用户操作共用）。
 -- 无论走哪条分支，_busy 一定会被释放，否则自动刷新会永久停摆。
 function KindleDash:requestRefresh(silent, manual)
-    if self._busy or self._suspended then return end
+    if self._suspended then return false end
+    if self._busy then
+        -- 手动刷新必须能抢过后台刷新：否则用户在后台刷新期间点"刷新看板"毫无反应
+        -- （旧实现直接 return，连个提示都没有）。抢占只需换 generation，
+        -- 进行中的那次会在 settle/proceed 里发现号不对而自行退出。
+        if not manual then return false end
+    end
     self._busy = true
     self._last_attempt = os.time()
     local generation = (self._generation or 0) + 1
     self._generation = generation
     local function settle(ok, err)
-        self._busy = false
         if generation ~= self._generation then return end
+        self._busy = false
         if ok then self._last_error = nil else self._last_error = tostring(err or "Refresh failed") end
         self._failures = ok and 0 or (self._failures or 0) + 1
         self:record(ok and "download_verified" or "refresh_failed", self._last_error)
         if ok then self:armAutoRefresh() else self:armAutoRefresh(self:retryDelay()) end
     end
     local function proceed()
-        if generation ~= self._generation or self._suspended then self._busy = false; return end
+        if generation ~= self._generation then return end
         local ok, result = pcall(self.refreshDashboard, self, silent, manual)
         settle(ok and result, ok and self._fetch_error or result)
     end
-    if self:prepareNetwork(proceed) then proceed() end
+    local function fail_network()
+        if generation ~= self._generation then return end
+        self._busy = false
+        self._failures = (self._failures or 0) + 1
+        self._last_error = "Network timeout"
+        self:record("network_timeout")
+        self:armAutoRefresh(self:retryDelay())
+    end
+    if self:prepareNetwork(proceed, fail_network) then proceed() end
+    return true
 end
 
 -- 菜单入口：任何异常都收敛成提示，避免把 KOReader 打回桌面。
@@ -814,22 +852,39 @@ function KindleDash:onSuspend()
     self._suspended = true
     if self._resume_tick then UIManager:unschedule(self._resume_tick) end
     if self._auto_timer then UIManager:unschedule(self._auto_timer) end
+    if self._network_deadline then
+        UIManager:unschedule(self._network_deadline)
+        self._network_deadline = nil
+    end
+    -- 刷新途中被挂起（RTC 唤醒后很常见）：必须释放锁并作废进行中的那次。
+    -- 否则 _busy 永久为 true，此后所有 requestRefresh 直接 return，自动刷新彻底停摆。
+    self._busy = false
+    self._generation = (self._generation or 0) + 1
     -- 确保 RTC 任务在设备真正入睡前已注册，醒来后能按点刷新。
     self:scheduleRtcWake()
-    self:record("suspend")
+    local armed = false
+    if Device.wakeup_mgr then
+        local ok, scheduled = pcall(function() return Device.wakeup_mgr:isWakeupAlarmScheduled() end)
+        armed = ok and scheduled
+    end
+    -- 这条记录是"到底会不会自动刷新"的唯一证据：若每次 suspend 都是
+    -- "rtc NOT armed"，说明唤醒链断了，设备睡下去就再也不会自己醒。
+    self:record("suspend", armed and "rtc armed" or "rtc NOT armed")
 end
 
 function KindleDash:onResume()
     self._suspended = false
+    self._busy = false
+    self._generation = (self._generation or 0) + 1
     if self._resume_tick then UIManager:unschedule(self._resume_tick) end
-    local attempts = 0
+    if self._network_deadline then
+        UIManager:unschedule(self._network_deadline)
+        self._network_deadline = nil
+    end
+    -- 走 requestRefresh：它自带防重入、受管 Wi-Fi（唤醒后 WiFi 通常是关的）和失败退避。
+    -- 不要在这里再造一套重试——两套重试会并发写缓存。
     self._resume_tick = function()
-        if not self.dash_widget or self._suspended then return end
-        attempts = attempts + 1
-        local ok, fetched = pcall(self.refreshDashboard, self, true, false)
-        if (not ok or not fetched) and attempts < 3 then
-            UIManager:scheduleIn(attempts == 1 and 15 or 40, self._resume_tick)
-        end
+        if self.dash_widget and not self._suspended then self:requestRefresh(true, false) end
     end
     -- Wi-Fi 恢复是异步的，稍等再刷。
     UIManager:scheduleIn(5, self._resume_tick)
@@ -838,13 +893,15 @@ function KindleDash:onResume()
 end
 
 function KindleDash:onCloseWidget()
-    self.auto_on = false
-    if self._auto_timer then UIManager:unschedule(self._auto_timer) end
+    -- 只收定时器，不改 auto_on：这个回调不只退出时触发（插件从菜单注销等也会），
+    -- 一旦把 auto_on 置 false，自动刷新会静默关停到下次重启，且没有任何提示。
+    if self._auto_timer then UIManager:unschedule(self._auto_timer); self._auto_timer = nil end
     if self._resume_tick then UIManager:unschedule(self._resume_tick) end
     if self._network_deadline then
         UIManager:unschedule(self._network_deadline)
         self._network_deadline = nil
     end
+    self._busy = false
     self:cancelRtcWake()
 end
 
@@ -1015,7 +1072,8 @@ function KindleDash:addToMainMenu(menu_items)
             { text = self:tr("实验：单次 RTC 唤醒测试"), callback = function() self:rtcExperiment() end },
             { text = self:tr("关于"), callback = function()
                 UIManager:show(InfoMessage:new{
-                    text = self:tr("Shawn Kanban v0.3.0\n取图顺序：局域网 PC > 云端 Pages > 本地缓存\n")
+                    text = "Shawn Kanban v" .. VERSION .. "\n"
+                       .. self:label("Image sources: LAN > Cloud > Cache\n", "取图顺序：局域网 PC > 云端 Pages > 本地缓存\n")
                        .. self:tr("每半小时 RTC 唤醒刷新，设备平时正常休眠\n")
                        .. self:tr("AI 额度走局域网实时，关机显示最后值\n")
                        .. self:tr("顶部下滑/顶部点击返回看板退出"),

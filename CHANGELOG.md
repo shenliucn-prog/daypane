@@ -23,6 +23,18 @@
 - Restored managed Wi-Fi (`managed_wifi` / `wifi_off`) before each fetch with a 60-second deadline,
   since a Kindle that wakes from RTC wake usually has Wi-Fi off.
 
+## 0.3.1
+
+- Cache writes use a unique temporary file. Two concurrent refreshes (UI timer, RTC wake, resume) used to share one `.pending` file, so the slower one kept appending into the file the faster one had already renamed — a corrupt image that then persisted on screen.
+- Suspending during a refresh no longer wedges the re-entrancy lock. `_busy` stayed `true` and every later refresh returned immediately, so auto-refresh died until a restart.
+- A manual refresh can now preempt an in-flight background refresh instead of being dropped with no feedback.
+- Resume refresh goes through the shared refresh entry point, so it also gets managed Wi-Fi and the backoff retry instead of a second, competing retry loop.
+- Suspend records whether the RTC alarm is actually armed (`rtc armed` / `rtc NOT armed` in the health log), so a broken wake chain is visible instead of silent.
+- `Device.wakeup_mgr` missing is logged and recorded instead of silently downgrading to "only refreshes while awake".
+- Closing the plugin no longer clears the auto-refresh preference.
+- Saving a LAN address without a port keeps the configured port instead of silently using port 80.
+- Refresh interval is clamped in one place; the UI timer and the RTC wake no longer disagree.
+
 ## 0.2.0
 
 - Versioned display manifests and SHA-256 verification, bounded downloads and decode-before-replace caches.

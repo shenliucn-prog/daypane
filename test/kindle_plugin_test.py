@@ -53,6 +53,7 @@ function wake:removeTasks(_, fn)
         if fn == nil or self.tasks[i].fn == fn then table.remove(self.tasks, i) end
     end
 end
+function wake:isWakeupAlarmScheduled() return #self.tasks > 0 end
 
 -- Wi-Fi manager (ui/network/manager).
 NET = {connected=true,on=true,disabled=false}
@@ -139,6 +140,20 @@ UI.queue[retry]=nil; retry()
 assert(refreshes == 2)
 UI.queue[retry]=nil; retry()
 assert(refreshes == 3 and UI.queue[retry]==nil)
+-- Suspending mid-refresh must release the re-entrancy lock. If it stayed set,
+-- every later requestRefresh() would return immediately and auto-refresh would
+-- be dead until a restart -- the very symptom this plugin is supposed to fix.
+d:requestRefresh(true, false)
+d:onSuspend()
+assert(d._busy == false)
+d:onResume()
+assert(d._busy == false)
+-- A manual refresh must be able to preempt an in-flight background refresh;
+-- silently dropping it leaves the user staring at a menu item that does nothing.
+d._busy = true
+assert(d:requestRefresh(true, false) == false)
+assert(d:requestRefresh(false, true) == true)
+d._busy = false
 -- A failed build must leave the on-screen dashboard untouched: closing it
 -- first and restoring the reference afterwards would claim a closed widget
 -- is still displayed, and the device would look stuck.
