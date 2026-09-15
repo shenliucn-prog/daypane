@@ -8,14 +8,9 @@
 --   2) 云端静态图（GitHub Pages manifest）—— GitHub Actions 每半小时渲染，电脑关机仍可用
 --   3) 本地持久缓存（settings 目录）—— 网络全断时显示最后一次的图
 --
--- 自动刷新（v0.3.0 重构）：
---   * 允许设备正常休眠。不再用 pause_auto_suspend / resetT1Timeout 硬扛——那两个在
---     Kindle 上防不住固件屏保，却会在 resume 边界调用 powerd 导致 UI 卡死（只能重启）。
---   * 改用 RTC（Device.wakeup_mgr）每半小时唤醒一次 → 刷新 → 再睡。省电且可靠。
---     Kindle 只在 ReadyToSuspend 时把队首任务写进 powerd 的 RTC 闹钟，所以队列里
---     必须始终留一条任务；且 WakeupMgr:wakeupAction() 会在回调返回后 removeTask(1)，
---     回调内部绝不能同步重排（见 scheduleRtcWake 注释）。
---   * 设备醒着时，UI 定时器负责对齐整点/半点的刷新。
+-- 自动刷新：看板显示期间默认保持唤醒，UI 定时器在请求完成后安排下一次。
+-- 手动休眠暂停 UI 更新，唤醒后恢复。周期 RTC 默认关闭，仍属机型相关实验。
+-- 不在唤醒边界同步调用 resetT1Timeout。
 --
 -- 历史坑：本插件曾拆成 main.lua + runtime.lua 两层，runtime 由 dofile 在 main 之后执行、
 -- 静默覆盖 main 的同名函数，导致 main 里大量代码是死代码、改一处不生效。v0.3.0 合并为
@@ -43,7 +38,7 @@ local JSON = require("json")
 -- 网络请求超时：电脑关机时不要让用户等太久，8 秒无响应就切换下一级。
 http.TIMEOUT = 8
 
-local VERSION = "0.3.2"
+local VERSION = "0.3.3"
 local REFRESH_SEC = 30 * 60
 local MAX_IMAGE = 4 * 1024 * 1024
 local DEFAULT_HOST = ""
@@ -416,10 +411,7 @@ function KindleDash:armAutoRefresh(delay)
         if self.dash_widget and not self._suspended then
             pcall(function() self:requestRefresh(true, false) end)
         end
-        self:scheduleRtcWake()
-        local next_delay = self:nextDelay()
-        if next_delay < 30 then next_delay = next_delay + self:intervalSec() end
-        UIManager:scheduleIn(next_delay, tick)
+
     end
     self._auto_timer = tick
     local first = delay or self:nextDelay()
@@ -595,12 +587,6 @@ function KindleDash:writePng(path, bytes)
         os.remove(tmp); return nil, "Manifest dimensions mismatch"
     end
     local renamed = os.rename(tmp, path)
-    if not renamed and self:fileExists(path) then
-        -- 设备是 Linux，rename 本就可原子覆盖；但 Windows/部分文件系统上 os.rename
-        -- 拒绝覆盖已有文件。只有"目标已存在且改名失败"才退化为先删后改，保住原子性。
-        os.remove(path)
-        renamed = os.rename(tmp, path)
-    end
     if not renamed then os.remove(tmp); return nil, "Cache rename failed" end
     meta.downloadedAt = os.time() * 1000
     local mf = io.open(path .. ".json.tmp", "wb")
@@ -638,6 +624,9 @@ function KindleDash:buildScreen(img_path, w, h)
     end
     function container:onClose()
         -- 先标记已关闭再关窗：否则后台刷新会误判成"看板正显示"。
+        dash._generation = (dash._generation or 0) + 1
+        dash._busy = false
+        dash:releaseNetwork()
         dash.dash_widget = nil
         -- 看板不在了：停止定时刷新，也不再阻止设备休眠。
         dash:holdScreen(false)
@@ -646,6 +635,9 @@ function KindleDash:buildScreen(img_path, w, h)
         return true
     end
     function container:onBack()
+        dash._generation = (dash._generation or 0) + 1
+        dash._busy = false
+        dash:releaseNetwork()
         dash.dash_widget = nil
         dash:holdScreen(false)
         dash:armAutoRefresh()
@@ -725,15 +717,32 @@ end
 -- 返回 false 表示已安排超时/回调，稍后由它们继续。
 -- 这里只管网络，不碰 _busy / 重试——那些由调用方按 generation 决定，
 -- 否则被抢占的旧刷新会把新刷新的状态一起清掉。
+function KindleDash:releaseNetwork()
+    if self._network_release then self._network_release() end
+end
+
 function KindleDash:prepareNetwork(on_ready, on_fail)
+    self:releaseNetwork()
     local net = self:networkMgr()
-    if not net or not self:option("managed_wifi", true) then return true end
+    if not net or not self:option("managed_wifi", false) then return true end
     if net:isConnected() then return true end
     if self._network_deadline then
         UIManager:unschedule(self._network_deadline)
         self._network_deadline = nil
     end
-    local settled = false
+    local owned = net.isWifiOn and not net:isWifiOn()
+    local settled, released = false, false
+    local deadline
+    local release
+    release = function()
+        if released then return end
+        released, settled = true, true
+        if deadline then UIManager:unschedule(deadline) end
+        if self._network_deadline == deadline then self._network_deadline = nil end
+        if self._network_release == release then self._network_release = nil end
+        if owned and self:option("wifi_off", false) then pcall(function() net:disableWifi() end) end
+    end
+    self._network_release = release
     local function settle(ok)
         if settled then return end
         settled = true
@@ -746,10 +755,11 @@ function KindleDash:prepareNetwork(on_ready, on_fail)
             return
         end
         -- 超时：放弃本次，顺手关掉自己开的 WiFi，然后交给调用方退避重试。
-        if self:option("wifi_off", true) then pcall(function() net:disableWifi() end) end
+        release()
         on_fail()
     end
-    self._network_deadline = function() settle(false) end
+    deadline = function() settle(false) end
+    self._network_deadline = deadline
     UIManager:scheduleIn(60, self._network_deadline)
     local ok = pcall(function()
         net:turnOnWifiAndWaitForConnection(function() settle(true) end)
@@ -832,6 +842,7 @@ function KindleDash:requestRefresh(silent, manual)
     local function settle(ok, err)
         if generation ~= self._generation then return end
         self._busy = false
+        self:releaseNetwork()
         if ok then self._last_error = nil else self._last_error = tostring(err or "Refresh failed") end
         self._failures = ok and 0 or (self._failures or 0) + 1
         self:record(ok and "download_verified" or "refresh_failed", self._last_error)
@@ -906,6 +917,7 @@ end
 -- ---------------- 生命周期 ----------------
 
 function KindleDash:onSuspend()
+    self:releaseNetwork()
     self._suspended = true
     if self._resume_tick then UIManager:unschedule(self._resume_tick) end
     if self._auto_timer then UIManager:unschedule(self._auto_timer) end
@@ -958,6 +970,8 @@ function KindleDash:onResume()
 end
 
 function KindleDash:onCloseWidget()
+    self._generation = (self._generation or 0) + 1
+    self:releaseNetwork()
     -- 只收定时器，不改 auto_on：这个回调不只退出时触发（插件从菜单注销等也会），
     -- 一旦把 auto_on 置 false，自动刷新会静默关停到下次重启，且没有任何提示。
     if self._auto_timer then UIManager:unschedule(self._auto_timer); self._auto_timer = nil end
@@ -1139,6 +1153,12 @@ function KindleDash:addToMainMenu(menu_items)
             { text = self:tr("设置：图片或清单地址"), callback = function() self:setupWizard() end },
             { text = self:tr("设备状态"), callback = function() self:showStatus() end },
             { text = self:tr("刷新间隔"), callback = function() self:editInterval() end },
+            { text = self:label("Connect Wi-Fi for updates", "更新时连接 Wi-Fi"),
+              checked_func = function() return self:option("managed_wifi", false) end,
+              callback = function() self:setOption("managed_wifi", not self:option("managed_wifi", false)) end },
+            { text = self:label("Turn off Wi-Fi started by dashboard", "关闭看板开启的 Wi-Fi"),
+              checked_func = function() return self:option("wifi_off", false) end,
+              callback = function() self:setOption("wifi_off", not self:option("wifi_off", false)) end },
             { text = self:tr("实验：单次 RTC 唤醒测试"), callback = function() self:rtcExperiment() end },
             { text = self:tr("关于"), callback = function()
                 UIManager:show(InfoMessage:new{

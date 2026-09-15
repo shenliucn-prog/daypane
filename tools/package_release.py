@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import zipfile
 
-VERSION = '0.3.2'
+VERSION = '0.3.3'
 
 def package(output=Path('dist')):
     output.mkdir(parents=True, exist_ok=True)

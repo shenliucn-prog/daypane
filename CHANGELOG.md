@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+- Use a single refresh timer; completion alone schedules the next attempt and preserves retry backoff.
+- Preserve the last good image on every rename failure.
+- Make Wi-Fi management opt-in; release only a radio started by the dashboard on success, timeout, cancellation or suspend. Ignore late callbacks after cancellation.
+- Update English and Chinese installation and operating-mode guidance.
+
 ## 0.3.2
 
 - Field test verdict on the Paperwhite 3: the RTC alarm does fire (crash.log shows the scheduled

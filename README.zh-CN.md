@@ -1,5 +1,7 @@
 # Shawn Kanban — 越狱 Kindle 常驻看板（原 Kindle Dash）
 
+> v0.3.3：看板显示期间默认保持唤醒；手动休眠后暂停更新，唤醒后恢复。周期 RTC 唤醒默认关闭。联网管理和自动关闭 Wi-Fi 均需主动开启，且仅关闭插件自己开启的无线电。升级请整体替换插件目录，runtime.lua 已不再使用。
+
 [English](README.md) | **简体中文**
 
 跨平台（Windows / macOS）Node.js 服务，把越狱 Kindle 的墨水屏变成一张常驻看板：
@@ -8,9 +10,9 @@
 
 仓库默认展示英文，本文为中文说明。Kindle 插件支持中英文菜单、提示和图片；新安装按 KOReader 语言选择，已有服务器配置的用户升级后保留中文。通过 **Shawn Kanban → Language / 语言 → English / 中文** 可独立选择，不要求更改 Kindle 固件语言。Mac 局域网配置见 [Mac 安装指南](MAC_SETUP.zh-CN.md)。
 
-## 安装 v0.2.0
+## 安装 v0.3.3
 
-从 [Releases](https://github.com/shenliucn-prog/shawn-kanban/releases) 下载版本安装包，按 [升级与回退说明](docs/UPGRADE.zh-CN.md) 复制完整插件目录（三个 Lua 文件）。你的中文地址与配置保留。
+从 [Releases](https://github.com/shenliucn-prog/shawn-kanban/releases) 下载版本安装包，按 [升级与回退说明](docs/UPGRADE.zh-CN.md) 复制完整插件目录（main.lua 和 sha256.lua）。你的中文地址与配置保留。
 
 使用 [配置工具](https://shenliucn-prog.github.io/shawn-kanban/setup/) 设置自己生成端的城市、时区、温度单位、屏幕尺寸、字号及模块顺序。可先导入旧 config.json 保留其他设置；提供日常、工作、极简模板。下载的配置需要放到自己的生成端，不会改变公共示例。
 

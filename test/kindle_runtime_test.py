@@ -37,7 +37,13 @@ class RuntimeTests(unittest.TestCase):
             local bytes=d:fetchScreen();assert(bytes==PNG)
             DECODE_FAIL=true;assert(not d:writePng(CACHE,bytes))
             f=io.open(CACHE,'rb');assert(f:read('*a')=='previous-good-image');f:close()
-            DECODE_FAIL=false;assert(d:writePng(CACHE,bytes))
+            DECODE_FAIL=false
+            local rename=os.rename
+            os.rename=function() return nil, 'simulated filesystem failure' end
+            assert(not d:writePng(CACHE,bytes))
+            os.rename=rename
+            f=io.open(CACHE,'rb');assert(f:read('*a')=='previous-good-image');f:close()
+            assert(d:writePng(CACHE,bytes))
             f=io.open(CACHE,'rb');assert(f:read('*a')==PNG);f:close()
             assert(not d:writePng(CACHE,'bad image'))
             ''')
@@ -65,4 +71,32 @@ class RuntimeTests(unittest.TestCase):
         local old=d.dash_widget
         d.buildScreen=function() error('bad render') end
         assert(d:showDashboard('broken',false)==false and d.dash_widget==old)
+        ''')
+
+    def test_single_timer_and_wifi_ownership(self):
+        lua.execute('''
+        for fn in pairs(UI.queue) do UI.queue[fn]=nil end
+        local d=Plugin:new{language='en',auto_on=true,dash_widget={}}
+        d.record=function() end
+        d.refreshDashboard=function() return false end
+        NET.connected=true
+        d:armAutoRefresh()
+        local tick=d._auto_timer;UI.queue[tick]=nil;tick()
+        local n=0;for fn in pairs(UI.queue) do n=n+1 end
+        assert(n==1 and UI.queue[d._auto_timer]==60, 'duplicate timer or lost backoff')
+        d:armAutoRefresh();tick=d._auto_timer;UI.queue[tick]=nil
+        d.refreshDashboard=function() return true end;tick()
+        n=0;for fn in pairs(UI.queue) do n=n+1 end;assert(n==1)
+        d.option=function(_,key,default) if key=='managed_wifi' or key=='wifi_off' then return true end;return default end
+        NET.connected=false;NET.on=true;NET.disabled=false
+        d:requestRefresh(true,false);d._network_deadline()
+        assert(not NET.disabled, 'must preserve existing radio')
+        NET.on=false;NET.disabled=false
+        d:requestRefresh(true,false);local late=NET.callback
+        d:onSuspend();assert(NET.disabled and not d._busy)
+        late();assert(d._suspended and not d._busy)
+        d._suspended=false;NET.disabled=false
+        d:requestRefresh(true,false);NET.callback()
+        assert(NET.disabled and not d._busy, 'release owned radio after success')
+        NET.connected=true
         ''')
