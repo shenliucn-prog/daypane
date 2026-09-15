@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Move repository and Pages URLs to `daypane`; migrate the two saved built-in cloud image URLs on plugin upgrade, preserving custom URLs and language.
+- 仓库及 Pages 地址迁移至 `daypane`；升级插件时自动迁移两个内置旧图源，保留自定义地址和语言。
+
 - Rename the project, dashboard and plugin menu to DayPane; improve English and Chinese Kindle repurposing documentation.
 - Keep the KindleDash plugin identity, saved settings, environment variables and local data paths compatible.
 - 项目、看板和插件菜单更名为 DayPane（日窗），补充中英文 Kindle 改造介绍；保留插件标识、已有配置、环境变量和本地数据路径。

@@ -237,5 +237,17 @@ saved={host='old-device'}
 assert(d:loadLanguage()=='zh' and saved.language=='zh')
 saved={}; G_reader_settings.readSetting=function() return 'zh_CN' end
 assert(d:loadLanguage()=='zh')
+for _, filename in ipairs({'screen.png', 'screen-en.png'}) do
+    saved={cloud='https://shenliucn-prog.github.io/shawn-kanban/'..filename}
+    local expected='https://shenliucn-prog.github.io/daypane/'..filename
+    assert(d:loadCloud()==expected and saved.cloud==expected)
+    assert(d:loadCloud()==expected, 'migration must be idempotent')
+end
+for _, url in ipairs({'', 'https://example.test/custom.png',
+    'https://shenliucn-prog.github.io/shawn-kanban/custom.png'}) do
+    saved={cloud=url}; assert(d:loadCloud()==url and saved.cloud==url)
+end
+saved={}
+print('PASS: legacy built-in URL migration preserves custom and empty URLs')
 print('PASS: English first install, persisted locale, Chinese migration, dynamic menus, custom URLs, separate caches')
 ''')

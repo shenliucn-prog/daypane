@@ -16,13 +16,13 @@ The old `gh-pages` branch remains for migration rollback; the new pipeline does 
 Create a cron-job.org job:
 
 - Name: DayPane half-hour render
-- URL: `https://api.github.com/repos/shenliucn-prog/shawn-kanban/actions/workflows/render.yml/dispatches`
+- URL: `https://api.github.com/repos/shenliucn-prog/daypane/actions/workflows/render.yml/dispatches`
 - Method: POST
 - Body: `{"ref":"main"}`
 - Schedule: minute 25 and 55 of every hour, leaving time for generation before Kindle refresh at :00 and :30. The configured job uses America/Los_Angeles; these minute positions also match UTC.
 - Headers: `Accept: application/vnd.github+json`, `Content-Type: application/json`, and `Authorization: Bearer <dedicated-token>`.
 
-Use a fine-grained GitHub token restricted to `shawn-kanban`, with Actions write permission and required Metadata read access. Set an expiry and renew it before that date. Store the credential only in the scheduler's authentication header, never in the URL or Git. Do not give the scheduler an existing account-wide token.
+Use a fine-grained GitHub token restricted to `daypane`, with Actions write permission and required Metadata read access. Set an expiry and renew it before that date. Store the credential only in the scheduler's authentication header, never in the URL or Git. Do not give the scheduler an existing account-wide token.
 
 An accepted dispatch is not proof of a successful image deployment. The scheduler returns quickly; inspect Actions for generation and deployment results.
 
@@ -32,9 +32,9 @@ GitHub's :17 and :47 schedule is a backup. `cancel-in-progress: false` prevents 
 
 In Settings → Pages, select GitHub Actions as the source. The workflow uses upload-pages-artifact and deploy-pages.
 
-- Image: `https://shenliucn-prog.github.io/shawn-kanban/screen.png`
-- Status page: `https://shenliucn-prog.github.io/shawn-kanban/`
-- Machine status: `https://shenliucn-prog.github.io/shawn-kanban/status.json`
+- Image: `https://shenliucn-prog.github.io/daypane/screen.png`
+- Status page: `https://shenliucn-prog.github.io/daypane/`
+- Machine status: `https://shenliucn-prog.github.io/daypane/status.json`
 
 Each run reads the previous image and checksum. If all public providers fail, fonts are unavailable, or rendering fails, it retains the last good image and publishes failure status where possible. An earlier failure, such as dependency installation, produces no deployment and leaves existing Pages content intact. The status page computes age from generation time and marks images older than 45 minutes as stale.
 

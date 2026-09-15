@@ -44,7 +44,7 @@ local MAX_IMAGE = 4 * 1024 * 1024
 local DEFAULT_HOST = ""
 local DEFAULT_PORT = "8787"
 -- 云端静态图完整 URL（GitHub Pages），留空则只用局域网
-local DEFAULT_CLOUD = "https://shenliucn-prog.github.io/shawn-kanban/screen.png"
+local DEFAULT_CLOUD = "https://shenliucn-prog.github.io/daypane/screen.png"
 local CACHE_IMG_NAME = "kindledash_screen.png"
 local CACHE_TS_NAME  = "kindledash_ts.txt"
 
@@ -121,7 +121,7 @@ local EN = {
     ["已保存: "] = "Saved: ",
     ["云端图地址 (完整 URL)"] = "Cloud image URL (full URL)",
     ["电脑关机时从这儿取图。留空则只用局域网。"] = "Used when the computer is unavailable. Leave empty for LAN only.",
-    ["https://用户名.github.io/shawn-kanban/screen.png"] = "https://username.github.io/shawn-kanban/screen-en.png",
+    ["https://用户名.github.io/daypane/screen.png"] = "https://username.github.io/daypane/screen-en.png",
     ["已清空云端地址"] = "Cloud URL cleared",
     ["刷新看板"] = "Refresh dashboard",
     ["设置局域网服务器"] = "Set LAN server",
@@ -261,7 +261,18 @@ end
 function KindleDash:loadCloud()
     local ok, s = pcall(function() return LuaSettings:open(self:settingsPath()) end)
     if ok and s and s:has("cloud") then
-        return s:readSetting("cloud") or DEFAULT_CLOUD
+        local cloud = s:readSetting("cloud") or DEFAULT_CLOUD
+        local legacy = "https://shenliucn-prog.github.io/shawn-kanban/"
+        if cloud == legacy .. "screen.png" then
+            cloud = DEFAULT_CLOUD
+        elseif cloud == legacy .. "screen-en.png" then
+            cloud = DEFAULT_CLOUD:gsub("screen.png$", "screen-en.png")
+        end
+        if cloud ~= s:readSetting("cloud") then
+            s:saveSetting("cloud", cloud)
+            s:flush()
+        end
+        return cloud
     end
     return self.language == "en" and DEFAULT_CLOUD:gsub("screen.png$", "screen-en.png") or DEFAULT_CLOUD
 end
@@ -450,7 +461,7 @@ end
 function KindleDash:manifestUrl(image)
     if image:match("%.json$") then return image end
     if image:match("/api/screen") then return image:gsub("/api/screen", "/api/display") end
-    if image:match("^https://shenliucn%-prog%.github%.io/shawn%-kanban/") then
+    if image:match("^https://shenliucn%-prog%.github%.io/daypane/") then
         if image:match("/screen%-en%.png$") then return image:gsub("screen%-en%.png$", "en/manifest.json") end
         return image:gsub("screen.png$", "manifest.json")
     end
@@ -1044,7 +1055,7 @@ function KindleDash:setCloudUrl()
         title = self:tr("云端图地址 (完整 URL)"),
         description = self:tr("电脑关机时从这儿取图。留空则只用局域网。"),
         input = self.cloud or "",
-        input_hint = self:tr("https://用户名.github.io/shawn-kanban/screen.png"),
+        input_hint = self:tr("https://用户名.github.io/daypane/screen.png"),
         buttons = {
             {
                 { text = self:tr("取消"), callback = function() UIManager:close(dialog) end },
