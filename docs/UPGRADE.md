@@ -9,7 +9,7 @@
 1. Download `ShawnKanban-0.3.3.zip` and `SHA256SUMS` from Releases. Verify the checksum if desired.
 2. Exit KOReader and connect the Kindle over USB. Back up `koreader/plugins/KindleDash.koplugin/` **and** `koreader/settings/kindledash.lua` on your computer.
 3. Copy the complete `KindleDash.koplugin` folder from the ZIP into `koreader/plugins`. Both main.lua and sha256.lua are required; do not copy only main.lua.
-4. Safely eject, restart KOReader, open Tools → Shawn Kanban → Setup / test image.
+4. Safely eject, restart KOReader, open Tools → DayPane → Setup / test image.
 5. Choose Language / 语言, and confirm the device status screen reports the expected dimensions and a fresh image.
 
 The public built-in URLs are demos using Shawn's configuration. New installs no longer attempt Shawn's LAN IP. To customize city, timezone, units or layout, use `/setup/` on the Pages site (or open `web/setup/index.html` locally), download config.json and place it on **your own renderer**. You can import existing config first; unknown settings are preserved. The form does not upload data or change the hosted demo.

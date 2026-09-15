@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Shawn Kanban 整屏渲染器（PC 端出图，Kindle 端只显示）。
+"""DayPane 整屏渲染器（PC 端出图，Kindle 端只显示）。
 
 把 /api/dashboard JSON 渲染成 1072x1448 印刷布告栏风整屏图，
 16 级灰度（GRAY=128 / LIGHT_GRAY=200）最终 Floyd-Steinberg 抖动转 1-bit PNG。
@@ -496,10 +496,10 @@ def draw_footer(draw, d, y, offline=False, last_ok=None):
     hline(draw, y, GRAY, 1)
     y += 12
     now = display_now().strftime('%H:%M')
-    txt = ('Shawn Kanban · 离线 · 最后 %s · 顶部下滑返回' % (last_ok or '?')) if offline \
-        else ('Shawn Kanban · 更新 %s · 顶部下滑返回' % now)
+    txt = ('DayPane · 离线 · 最后 %s · 顶部下滑返回' % (last_ok or '?')) if offline \
+        else ('DayPane · 更新 %s · 顶部下滑返回' % now)
     if LANG == 'en':
-        txt = ('Shawn Kanban · Offline · Last %s' % (last_ok or '?')) if offline else 'Shawn Kanban · Updated %s · Swipe from top to exit' % now
+        txt = ('DayPane · Offline · Last %s' % (last_ok or '?')) if offline else 'DayPane · Updated %s · Swipe from top to exit' % now
     draw.text((PAD, y), txt, fill=GRAY, font=f(F_FOOT))
     return y + F_FOOT
 

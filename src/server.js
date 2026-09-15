@@ -86,7 +86,7 @@ function renderHtml(initial) {
   return `<!doctype html><html lang="zh"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shawn Kanban</title>
+<title>DayPane</title>
 <style>
 :root{color-scheme:dark;}
 *{box-sizing:border-box;margin:0;padding:0;}

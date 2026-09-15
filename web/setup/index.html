@@ -1,6 +1,6 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Shawn Kanban Setup</title>
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DayPane Setup</title>
 <style>body{font:17px system-ui;background:#f3f1eb;color:#202820;max-width:1000px;margin:40px auto;padding:20px}h1{font-size:40px}main{display:grid;grid-template-columns:1fr 1fr;gap:32px}section{background:white;padding:24px;border-radius:16px}label{display:block;margin:16px 0}input,select,button{font:inherit;padding:10px;border:1px solid #aaa;border-radius:6px;max-width:100%;box-sizing:border-box}input{width:100%}button{background:#214c39;color:white;cursor:pointer}small{display:block;color:#596359}#preview{border:3px solid #333;padding:14px;max-width:300px;margin:auto;background:#fafafa}#preview div{padding:12px 4px;border-bottom:1px solid #999}#error{color:#a22}a{color:#214c39}@media(max-width:650px){main{grid-template-columns:1fr}}</style>
-<h1>Shawn Kanban</h1><p>Configure your renderer · 配置你的看板生成端</p><p>This form runs in your browser. Your settings are not uploaded. / 配置仅在浏览器处理，不上传。</p>
+<h1>DayPane</h1><p>Configure your renderer · 配置你的看板生成端</p><p>This form runs in your browser. Your settings are not uploaded. / 配置仅在浏览器处理，不上传。</p>
 <main><section><label>Import existing config / 导入已有配置<input id="import" type="file" accept="application/json"></label>
 <label>Location name / 城市名称<input id="city" value="Shenzhen"></label><label>Latitude / 纬度<input id="lat" type="number" min="-90" max="90" step="any" value="22.54"></label><label>Longitude / 经度<input id="lon" type="number" min="-180" max="180" step="any" value="114.06"></label>
 <label>Timezone / 时区<input id="timezone" value="Asia/Shanghai" placeholder="America/Los_Angeles"></label>
@@ -12,7 +12,7 @@
 <label>Font scale / 字号比例<input id="scale" type="number" min="0.75" max="1.5" step="0.05" value="1"></label>
 <button id="download">Download config.json / 下载配置</button><p id="error" role="alert"></p></section>
 <section><h2>Layout preview / 布局示意</h2><small>This is a module-order sketch, not live data or a pixel-accurate render. / 仅示意模块顺序，非实时数据或精确渲染。</small><div id="preview"></div>
-<h2>Install / 安装</h2><ol><li>Download the plugin ZIP from GitHub Releases. / 下载插件安装包。</li><li>Exit KOReader, back up the old plugin and copy the new folder to koreader/plugins. / 退出、备份并覆盖插件。</li><li>Restart KOReader → Tools → Shawn Kanban → Setup / test image. / 重启后设置图源并测试。</li></ol>
+<h2>Install / 安装</h2><ol><li>Download the plugin ZIP from GitHub Releases. / 下载插件安装包。</li><li>Exit KOReader, back up the old plugin and copy the new folder to koreader/plugins. / 退出、备份并覆盖插件。</li><li>Restart KOReader → Tools → DayPane → Setup / test image. / 重启后设置图源并测试。</li></ol>
 <p>Put config.json in your own renderer repository or set SHAWN_CONFIG to its local path. It does not personalize the public demo URL. / 将配置放到自己的生成端；公共示例图不会因下载配置而改变。</p>
 <p>Choose English or 中文 on the Kindle independently of timezone and units. / Kindle 语言与时区、单位独立。</p>
 <a href="https://github.com/shenliucn-prog/shawn-kanban/releases">Releases / 安装包</a></section></main>

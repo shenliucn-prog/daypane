@@ -1,4 +1,4 @@
--- Shawn Kanban · Kindle 端显示插件（单一实现 v0.3.0）
+-- DayPane · Kindle 端显示插件（单一实现 v0.3.0）
 --
 -- 把渲染好的整屏 PNG（1072x1448，1-bit 抖动 / ~30KB）满屏显示。
 -- 排版/字体/灰度/抖动全部在渲染端完成，Kindle 只负责取图与显示。
@@ -1134,7 +1134,7 @@ end
 
 function KindleDash:addToMainMenu(menu_items)
     menu_items["0kindledash"] = {
-        text = "Shawn Kanban",
+        text = "DayPane",
         sorting_hint = "tools",
         sub_item_table_func = function() return {
             { text = "Language / 语言", sub_item_table = {
@@ -1162,7 +1162,7 @@ function KindleDash:addToMainMenu(menu_items)
             { text = self:tr("实验：单次 RTC 唤醒测试"), callback = function() self:rtcExperiment() end },
             { text = self:tr("关于"), callback = function()
                 UIManager:show(InfoMessage:new{
-                    text = "Shawn Kanban v" .. VERSION .. "\n"
+                    text = "DayPane v" .. VERSION .. "\n"
                        .. self:label("Image sources: LAN > Cloud > Cache\n", "取图顺序：局域网 PC > 云端 Pages > 本地缓存\n")
                        .. self:tr("看板显示期间保持常亮并定时刷新\n")
                        .. self:tr("AI 额度走局域网实时，关机显示最后值\n")

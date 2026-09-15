@@ -43,7 +43,7 @@ def main():
     font_main = load_font(FONT_BOLD, mainTitlePhysSz)
 
     y = PAD
-    draw.text((PAD, y), "Shawn Kanban", fill="black", font=font_main)
+    draw.text((PAD, y), "DayPane", fill="black", font=font_main)
     y += mainTitleH + 8
 
     for m in mods:

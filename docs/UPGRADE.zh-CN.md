@@ -9,7 +9,7 @@
 1. 从 Releases 下载 `ShawnKanban-0.3.3.zip` 和 `SHA256SUMS`。
 2. 退出 KOReader，USB 连接 Kindle。在电脑上备份 `koreader/plugins/KindleDash.koplugin/` 和 `koreader/settings/kindledash.lua`。
 3. 将安装包里的完整插件文件夹覆盖到 `koreader/plugins`。main.lua 和 sha256.lua 两个文件缺一不可，不能只复制 main.lua。
-4. 安全弹出并重启 KOReader，打开工具 → Shawn Kanban → 设置／测试图片。
+4. 安全弹出并重启 KOReader，打开工具 → DayPane → 设置／测试图片。
 5. 在 Language / 语言 中选择中文；检查设备状态中的屏幕尺寸和图片时间。
 
 已有地址、语言配置会保留，你的中文设置不变。新用户不再默认连接 Shawn 的局域网 IP。公共图源仍是个人配置的示例；更换城市、时区、单位、布局时，使用 Pages 的 `/setup/` 页面（或本地打开 `web/setup/index.html`），导入原配置并下载 config.json，放到自己的生成端。表单不上传数据，也不会修改公共示例图。

@@ -25,7 +25,7 @@ xcode-select --install
 
 1. Mac 和 Kindle 连接同一个允许设备互访的网络。
 2. 在 macOS 网络设置中查看 Mac 当前局域网 IP。
-3. KOReader → 工具 → Shawn Kanban → **设置局域网服务器**，填入 `IP:8787`，例如 `192.168.1.23:8787`。
+3. KOReader → 工具 → DayPane → **设置局域网服务器**，填入 `IP:8787`，例如 `192.168.1.23:8787`。
 4. 点击 **刷新看板**。插件安装、云端地址和休眠机制见 [README](README.zh-CN.md#kindle-安装与升级)。
 
 ## 连接失败排查

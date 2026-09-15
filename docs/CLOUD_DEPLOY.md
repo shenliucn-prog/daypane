@@ -15,7 +15,7 @@ The old `gh-pages` branch remains for migration rollback; the new pipeline does 
 
 Create a cron-job.org job:
 
-- Name: Shawn Kanban half-hour render
+- Name: DayPane half-hour render
 - URL: `https://api.github.com/repos/shenliucn-prog/shawn-kanban/actions/workflows/render.yml/dispatches`
 - Method: POST
 - Body: `{"ref":"main"}`

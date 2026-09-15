@@ -1,14 +1,18 @@
-# Shawn Kanban — an always-on dashboard for jailbroken Kindle
+# DayPane — Kindle E-Ink Dashboard with KOReader
 
 > v0.3.3: While the dashboard is visible, hold-awake mode is enabled by default. Manual sleep pauses updates until wake; recurring RTC wake is disabled by default. Wi-Fi management and automatic radio shutdown are opt-in. Only Wi-Fi started by this plugin is shut down. Replace the plugin folder as a whole; runtime.lua is obsolete.
 
 [简体中文](README.zh-CN.md) | **English (default)**
 
-A Windows/macOS Node.js service and cloud renderer for an e-ink dashboard: WorkBuddy / Claude Code / Codex activity estimates, weather, US and A-share markets, world clocks, and exchange rates. The KOReader **Shawn Kanban** plugin downloads full-screen images and refreshes at :00 and :30 while the dashboard is open.
+Repurpose an old Amazon Kindle as an always-on e-ink dashboard for weather, world clocks, market data and daily information. DayPane is an open-source Kindle repurposing project with a KOReader plugin, a local Node.js server and a GitHub Actions cloud renderer. Jailbreak and KOReader installation are prerequisites; this project does not provide a jailbreak.
+
+Formerly **Shawn Kanban / Kindle Dash**. The repository and GitHub Pages paths remain `shawn-kanban` so existing Kindle image URLs and scheduled jobs keep working. The plugin folder remains `KindleDash.koplugin`; saved settings and Chinese/English language preferences are preserved. The current v0.3.3 release still displays the old name; the source now uses DayPane.
+
+A Windows/macOS Node.js service and cloud renderer for an e-ink dashboard: WorkBuddy / Claude Code / Codex activity estimates, weather, US and A-share markets, world clocks, and exchange rates. The KOReader **DayPane** plugin downloads full-screen images and refreshes at :00 and :30 while the dashboard is open.
 
 English is the default repository language. The Kindle plugin supports English and Chinese menus, messages, and rendered dashboards. New installations follow the KOReader interface language (Chinese locales use Chinese; other locales use English). Existing installations with saved server settings retain Chinese until you explicitly switch.
 
-Select **Shawn Kanban → Language / 语言 → English / 中文** to choose independently of your Kindle firmware language. This uses the same plugin on English and Chinese Kindles; a jailbroken device and KOReader are still required.
+Select **DayPane → Language / 语言 → English / 中文** to choose independently of your Kindle firmware language. This uses the same plugin on English and Chinese Kindles; a jailbroken device and KOReader are still required.
 
 ## Install v0.3.3
 
@@ -63,7 +67,7 @@ Requires a jailbroken Kindle with KOReader.
 
 1. Exit KOReader and connect the Kindle by USB.
 2. Back up `koreader/plugins/KindleDash.koplugin/` before upgrading, then replace it with this repository's `KindleDash.koplugin/` folder.
-3. Safely eject the device, restart KOReader, and open Tools → **Shawn Kanban** → **Refresh dashboard**.
+3. Safely eject the device, restart KOReader, and open Tools → **DayPane** → **Refresh dashboard**.
 4. Under **Set cloud image URL**, use `https://shenliucn-prog.github.io/shawn-kanban/screen-en.png` for English or `https://shenliucn-prog.github.io/shawn-kanban/screen.png` for Chinese. New installations choose the built-in URL for their language. Existing settings are preserved; an existing empty URL must be filled in manually.
 5. For local service access, set **Set LAN server** to your computer's `IP:8787` and allow inbound TCP 8787. Cloud-only use requires no inbound computer port.
 

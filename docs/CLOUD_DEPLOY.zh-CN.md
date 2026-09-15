@@ -15,7 +15,7 @@
 
 在 cron-job.org 创建任务：
 
-- 名称：Shawn Kanban half-hour render
+- 名称：DayPane half-hour render
 - URL：`https://api.github.com/repos/shenliucn-prog/shawn-kanban/actions/workflows/render.yml/dispatches`
 - 方法：POST
 - 请求正文：`{"ref":"main"}`

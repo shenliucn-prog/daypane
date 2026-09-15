@@ -72,7 +72,7 @@ def ensure_repo(tok, login):
         return body
     st, body = api("POST", "/user/repos", {
         "name": REPO_NAME, "public": True,
-        "description": "Shawn Kanban - Kindle e-ink dashboard rendered by GitHub Actions",
+        "description": "DayPane — Repurpose a jailbroken Amazon Kindle as an e-ink dashboard with KOReader. Weather, world clocks, markets and daily info. Kindle 改造 / 墨水屏看板.",
     }, tok=tok)
     if st not in (201, 200):
         sys.exit("[repo] 创建失败 %s: %s" % (st, body))
