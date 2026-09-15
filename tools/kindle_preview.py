@@ -110,7 +110,7 @@ def choose_size(d, availW, availH):
         colw = int((tbw - phys_half) / (2 * phys_half))
         mods = build_modules(d, colw)
         ok = True
-        if wc_for(main_title_phys_sz, "Shawn Kanban") > tbw:
+        if wc_for(main_title_phys_sz, "DayPane") > tbw:
             ok = False
         for m in mods:
             if not ok: break

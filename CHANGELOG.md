@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Rename the project, dashboard and plugin menu to DayPane; improve English and Chinese Kindle repurposing documentation.
+- Keep the KindleDash plugin identity, saved settings, environment variables and local data paths compatible.
+- 项目、看板和插件菜单更名为 DayPane（日窗），补充中英文 Kindle 改造介绍；保留插件标识、已有配置、环境变量和本地数据路径。
+
 ## 0.3.3
 
 - Use a single refresh timer; completion alone schedules the next attempt and preserves retry backoff.

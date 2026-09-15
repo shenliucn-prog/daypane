@@ -25,7 +25,7 @@ See [configuration](README.md#configuration) for cities, stocks, and ports.
 
 1. Connect the Mac and Kindle to the same network with device-to-device access.
 2. Find the Mac's current LAN IP in macOS network settings.
-3. In KOReader → Tools → Shawn Kanban → **Set LAN server**, enter `IP:8787`, such as `192.168.1.23:8787`.
+3. In KOReader → Tools → DayPane → **Set LAN server**, enter `IP:8787`, such as `192.168.1.23:8787`.
 4. Select **Refresh dashboard**. See the [README](README.md#kindle-installation-and-upgrade) for plugin installation, cloud configuration, and sleep behavior.
 
 ## Troubleshooting

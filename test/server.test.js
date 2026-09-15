@@ -37,7 +37,7 @@ test('/ returns an HTML page', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/`);
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.match(html, /Shawn Kanban/i);
+    assert.match(html, /DayPane/i);
   } finally {
     server.close();
     db.close();

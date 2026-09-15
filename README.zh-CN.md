@@ -1,4 +1,8 @@
-# Shawn Kanban — 越狱 Kindle 常驻看板（原 Kindle Dash）
+# DayPane（日窗）— Kindle 墨水屏改造看板
+
+把闲置 Amazon Kindle 改造成常驻墨水屏信息看板：天气、世界时钟、行情和每日资讯。DayPane 是开源的 Kindle 改造／旧设备再利用项目，由 KOReader 插件、本地 Node.js 服务和 GitHub Actions 云端生成器组成。需要先完成越狱并安装 KOReader；本项目不提供越狱工具。
+
+原名 **Shawn Kanban / Kindle Dash**。仓库及 GitHub Pages 路径暂时保留 `shawn-kanban`，让已有 Kindle 图源地址和定时任务继续可用。插件目录仍为 `KindleDash.koplugin`，保留已有配置及中英文偏好。当前 v0.3.3 安装包仍显示旧名称，源码已使用 DayPane。
 
 > v0.3.3：看板显示期间默认保持唤醒；手动休眠后暂停更新，唤醒后恢复。周期 RTC 唤醒默认关闭。联网管理和自动关闭 Wi-Fi 均需主动开启，且仅关闭插件自己开启的无线电。升级请整体替换插件目录，runtime.lua 已不再使用。
 
@@ -6,9 +10,9 @@
 
 跨平台（Windows / macOS）Node.js 服务，把越狱 Kindle 的墨水屏变成一张常驻看板：
 **WorkBuddy / Claude Code / Codex 限额、天气、美股 + A股（带 30 日走势图）、世界时钟、汇率**，
-由电脑或云端生成整屏图片，KOReader 的 **Shawn Kanban** 插件负责下载和显示。看板打开时，每个整点/半点自动刷新（如 08:30、09:00）。
+由电脑或云端生成整屏图片，KOReader 的 **DayPane** 插件负责下载和显示。看板打开时，每个整点/半点自动刷新（如 08:30、09:00）。
 
-仓库默认展示英文，本文为中文说明。Kindle 插件支持中英文菜单、提示和图片；新安装按 KOReader 语言选择，已有服务器配置的用户升级后保留中文。通过 **Shawn Kanban → Language / 语言 → English / 中文** 可独立选择，不要求更改 Kindle 固件语言。Mac 局域网配置见 [Mac 安装指南](MAC_SETUP.zh-CN.md)。
+仓库默认展示英文，本文为中文说明。Kindle 插件支持中英文菜单、提示和图片；新安装按 KOReader 语言选择，已有服务器配置的用户升级后保留中文。通过 **DayPane → Language / 语言 → English / 中文** 可独立选择，不要求更改 Kindle 固件语言。Mac 局域网配置见 [Mac 安装指南](MAC_SETUP.zh-CN.md)。
 
 ## 安装 v0.3.3
 
@@ -39,7 +43,7 @@ npm start
 ```
 
 在 **MacBook** 上工作时，同样地 `npm install && npm start`，让 Kindle 连同一个 WiFi，
-把插件（工具 → Shawn Kanban）里的服务器地址改成 MacBook 的局域网 IP（菜单 → 设置服务器地址）。
+把插件（工具 → DayPane）里的服务器地址改成 MacBook 的局域网 IP（菜单 → 设置服务器地址）。
 
 ### 让服务开机自启 / 崩溃自拉起（可选）
 - Windows：`npm install -g pm2` 后 `pm2 start src/index.js --name shawn-kanban`
@@ -66,7 +70,7 @@ npm start
 
 1. 退出 KOReader，通过 USB 连接电脑。
 2. 升级前备份设备中的 `koreader/plugins/KindleDash.koplugin/`，再用本仓库同名文件夹覆盖。
-3. 安全弹出设备，重启 KOReader → 工具 → **Shawn Kanban** → **刷新看板**。
+3. 安全弹出设备，重启 KOReader → 工具 → **DayPane** → **刷新看板**。
 4. 在 **设置云端图地址** 中确认完整图片地址：`https://shenliucn-prog.github.io/shawn-kanban/screen.png`。新安装默认使用此地址；升级保留原配置，原先留空的地址需手动填写。
 5. 如使用局域网服务，在 **设置局域网服务器** 中填写电脑的 `IP:8787`，电脑防火墙需放行 TCP 8787。仅用云端无需开放电脑端口。
 
