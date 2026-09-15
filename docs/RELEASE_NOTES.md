@@ -1,7 +1,7 @@
-Reliable updates, device diagnostics and configurable dashboards.
+# Shawn Kanban v0.3.3
 
-Download the plugin ZIP, exit KOReader, back up your existing plugin and settings, and replace the complete KindleDash.koplugin directory. All three Lua files are required. Existing Chinese settings are preserved. See docs/UPGRADE.md or docs/UPGRADE.zh-CN.md for setup and rollback.
+Fixes duplicate refresh timers, preserves cached images on filesystem failures, and limits Wi-Fi shutdown to connections owned by the dashboard. Wi-Fi management is opt-in.
 
-New: verified image manifests, atomic cache replacement, failure backoff, local battery diagnostics, opt-in Wi-Fi management, night schedule, layout templates, configurable units/timezone/screen dimensions and a browser-only configuration tool.
+Includes the v0.3.x unified plugin, corrected certificate lookup, local renderer discovery and configured Shanghai timezone. Dashboard hold-awake is enabled by default; manual sleep pauses updates until resume. Recurring RTC wake remains disabled by default.
 
-Hardware limitation: physical Kindle tests and battery measurements are still pending. The RTC menu is a supervised one-shot experiment, disabled until explicitly confirmed; it does not enable recurring deep sleep.
+Replace the whole KindleDash.koplugin folder after backing up settings. runtime.lua is obsolete. See the English and Chinese upgrade guides. Automated tests do not establish battery life or cross-device wake reliability; this remains a prerelease.

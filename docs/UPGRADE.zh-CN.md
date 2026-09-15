@@ -1,12 +1,14 @@
 # 安装、升级与回退
 
+> v0.3.3：看板显示期间默认保持唤醒；手动休眠后暂停更新，唤醒后恢复。周期 RTC 唤醒默认关闭。联网管理和自动关闭 Wi-Fi 均需主动开启，且仅关闭插件自己开启的无线电。升级请整体替换插件目录，runtime.lua 已不再使用。
+
 [English](UPGRADE.md)
 
-## 安装 v0.2.0
+## 安装 v0.3.3
 
-1. 从 Releases 下载 `ShawnKanban-0.2.0.zip` 和 `SHA256SUMS`。
+1. 从 Releases 下载 `ShawnKanban-0.3.3.zip` 和 `SHA256SUMS`。
 2. 退出 KOReader，USB 连接 Kindle。在电脑上备份 `koreader/plugins/KindleDash.koplugin/` 和 `koreader/settings/kindledash.lua`。
-3. 将安装包里的完整插件文件夹覆盖到 `koreader/plugins`。三个 Lua 文件缺一不可，不能只复制 main.lua。
+3. 将安装包里的完整插件文件夹覆盖到 `koreader/plugins`。main.lua 和 sha256.lua 两个文件缺一不可，不能只复制 main.lua。
 4. 安全弹出并重启 KOReader，打开工具 → Shawn Kanban → 设置／测试图片。
 5. 在 Language / 语言 中选择中文；检查设备状态中的屏幕尺寸和图片时间。
 
