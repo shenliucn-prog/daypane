@@ -5,7 +5,7 @@
 //
 // 环境变量：
 //   GITHUB_TOKEN   必填（要能写仓库，勾 repo 或 contents:write）
-//   GITHUB_REPO   owner/repo，例如 shen/shawn-kanban
+//   GITHUB_REPO   owner/repo，例如 shen/daypane
 //   GITHUB_BRANCH 默认 runtime-data
 //   REPORT_PATH   仓库内路径，默认 quotas.json
 //   REPORT_EVERY  最小上报间隔（毫秒），默认 5 分钟

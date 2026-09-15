@@ -2,7 +2,7 @@
 
 把闲置 Amazon Kindle 改造成常驻墨水屏信息看板：天气、世界时钟、行情和每日资讯。DayPane 是开源的 Kindle 改造／旧设备再利用项目，由 KOReader 插件、本地 Node.js 服务和 GitHub Actions 云端生成器组成。需要先完成越狱并安装 KOReader；本项目不提供越狱工具。
 
-原名 **Shawn Kanban / Kindle Dash**。仓库及 GitHub Pages 路径暂时保留 `shawn-kanban`，让已有 Kindle 图源地址和定时任务继续可用。插件目录仍为 `KindleDash.koplugin`，保留已有配置及中英文偏好。当前 v0.3.3 安装包仍显示旧名称，源码已使用 DayPane。
+原名 **Shawn Kanban / Kindle Dash**。仓库已改址为 `daypane`。旧仓库链接会重定向，但旧 Pages 图源地址不会。使用 v0.3.3 的设备请手动更新下方云端图地址，或安装最新插件源码以自动迁移内置中英文图源；自定义图源不变。电脑采集器的 `GITHUB_REPO` 请改为 `shenliucn-prog/daypane`。插件目录仍为 `KindleDash.koplugin`，保留已有配置及中英文偏好。当前 v0.3.3 安装包仍显示旧名称，源码已使用 DayPane。
 
 > v0.3.3：看板显示期间默认保持唤醒；手动休眠后暂停更新，唤醒后恢复。周期 RTC 唤醒默认关闭。联网管理和自动关闭 Wi-Fi 均需主动开启，且仅关闭插件自己开启的无线电。升级请整体替换插件目录，runtime.lua 已不再使用。
 
@@ -16,9 +16,9 @@
 
 ## 安装 v0.3.3
 
-从 [Releases](https://github.com/shenliucn-prog/shawn-kanban/releases) 下载版本安装包，按 [升级与回退说明](docs/UPGRADE.zh-CN.md) 复制完整插件目录（main.lua 和 sha256.lua）。你的中文地址与配置保留。
+从 [Releases](https://github.com/shenliucn-prog/daypane/releases) 下载版本安装包，按 [升级与回退说明](docs/UPGRADE.zh-CN.md) 复制完整插件目录（main.lua 和 sha256.lua）。你的中文地址与配置保留。
 
-使用 [配置工具](https://shenliucn-prog.github.io/shawn-kanban/setup/) 设置自己生成端的城市、时区、温度单位、屏幕尺寸、字号及模块顺序。可先导入旧 config.json 保留其他设置；提供日常、工作、极简模板。下载的配置需要放到自己的生成端，不会改变公共示例。
+使用 [配置工具](https://shenliucn-prog.github.io/daypane/setup/) 设置自己生成端的城市、时区、温度单位、屏幕尺寸、字号及模块顺序。可先导入旧 config.json 保留其他设置；提供日常、工作、极简模板。下载的配置需要放到自己的生成端，不会改变公共示例。
 
 Kindle 菜单新增设置／测试图片、设备状态、刷新间隔、按需联网和夜间降频。RTC 是需确认的单次实验，不默认开启。设备状态将图片生成时间与下载时间分开，避免旧图伪装为新数据。
 
@@ -28,7 +28,7 @@ Kindle 菜单新增设置／测试图片、设备状态、刷新间隔、按需�
 
 - 源码在 `main`，额度输入在独立 `runtime-data` 分支；仍属于同一仓库。
 - 新生成图片通过 Pages 部署产物发布，不提交到源码分支。生成失败时尽量保留上次成功图片。
-- [网页版看板](https://shenliucn-prog.github.io/shawn-kanban/)显示更新状态；[status.json](https://shenliucn-prog.github.io/shawn-kanban/status.json)记录生成时间和工作流结果。超过45分钟未更新时，网页标记过期。
+- [网页版看板](https://shenliucn-prog.github.io/daypane/)显示更新状态；[status.json](https://shenliucn-prog.github.io/daypane/status.json)记录生成时间和工作流结果。超过45分钟未更新时，网页标记过期。
 - 电脑关闭时仍可生成公共数据；本机额度数据取决于上报程序，可能保持最后一次的值。
 
 配置与状态检查见 [云端部署](docs/CLOUD_DEPLOY.zh-CN.md)。外部触发所用令牌到期前需更新；不要把令牌写入仓库。
@@ -71,7 +71,7 @@ npm start
 1. 退出 KOReader，通过 USB 连接电脑。
 2. 升级前备份设备中的 `koreader/plugins/KindleDash.koplugin/`，再用本仓库同名文件夹覆盖。
 3. 安全弹出设备，重启 KOReader → 工具 → **DayPane** → **刷新看板**。
-4. 在 **设置云端图地址** 中确认完整图片地址：`https://shenliucn-prog.github.io/shawn-kanban/screen.png`。新安装默认使用此地址；升级保留原配置，原先留空的地址需手动填写。
+4. 在 **设置云端图地址** 中确认完整图片地址：`https://shenliucn-prog.github.io/daypane/screen.png`。新安装默认使用此地址；升级保留原配置，原先留空的地址需手动填写。
 5. 如使用局域网服务，在 **设置局域网服务器** 中填写电脑的 `IP:8787`，电脑防火墙需放行 TCP 8787。仅用云端无需开放电脑端口。
 
 取图顺序为 **局域网电脑 → 云端 → 本地缓存**。电脑不在线时会先等待局域网请求超时，再尝试云端。云端 HTTPS 下载校验证书，需要 KOReader 自带的有效 CA 证书文件。

@@ -6,7 +6,7 @@
   - token 需要 repo + workflow 权限（Device Flow 的 App token 不行）
 
 做四件事：
-  1) 建公开仓库 shawn-kanban（已存在则复用）
+  1) 建公开仓库 daypane（已存在则复用）
   2) 设置 origin 并 push main
   3) 手动触发 Render Kindle Screen 工作流
   4) 开启 GitHub Pages（gh-pages 分支，根目录）
@@ -23,7 +23,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 TOKEN_FILE = r"C:/Users/Shen/.workbuddy/binaries/gh/token.txt"
-REPO_NAME = "shawn-kanban"
+REPO_NAME = "daypane"
 WORKFLOW = "render.yml"
 API = "https://api.github.com"
 

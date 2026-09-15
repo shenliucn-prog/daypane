@@ -6,7 +6,7 @@
 
 Repurpose an old Amazon Kindle as an always-on e-ink dashboard for weather, world clocks, market data and daily information. DayPane is an open-source Kindle repurposing project with a KOReader plugin, a local Node.js server and a GitHub Actions cloud renderer. Jailbreak and KOReader installation are prerequisites; this project does not provide a jailbreak.
 
-Formerly **Shawn Kanban / Kindle Dash**. The repository and GitHub Pages paths remain `shawn-kanban` so existing Kindle image URLs and scheduled jobs keep working. The plugin folder remains `KindleDash.koplugin`; saved settings and Chinese/English language preferences are preserved. The current v0.3.3 release still displays the old name; the source now uses DayPane.
+Formerly **Shawn Kanban / Kindle Dash**. The repository is now `daypane`. GitHub redirects old repository links, but not the old Pages image URLs. Update an installed v0.3.3 plugin’s cloud image URL to the new address below, or install the latest plugin source to migrate either built-in image URL automatically. Custom image URLs are preserved. Update your quota reporter’s `GITHUB_REPO` to `shenliucn-prog/daypane`. The plugin folder remains `KindleDash.koplugin`; saved settings and Chinese/English language preferences are preserved. The current v0.3.3 release still displays the old name; the source now uses DayPane.
 
 A Windows/macOS Node.js service and cloud renderer for an e-ink dashboard: WorkBuddy / Claude Code / Codex activity estimates, weather, US and A-share markets, world clocks, and exchange rates. The KOReader **DayPane** plugin downloads full-screen images and refreshes at :00 and :30 while the dashboard is open.
 
@@ -16,9 +16,9 @@ Select **DayPane → Language / 语言 → English / 中文** to choose independ
 
 ## Install v0.3.3
 
-Download the versioned plugin ZIP from [Releases](https://github.com/shenliucn-prog/shawn-kanban/releases). Follow [installation, upgrade and rollback](docs/UPGRADE.md); copy the whole plugin folder, not just main.lua.
+Download the versioned plugin ZIP from [Releases](https://github.com/shenliucn-prog/daypane/releases). Follow [installation, upgrade and rollback](docs/UPGRADE.md); copy the whole plugin folder, not just main.lua.
 
-Use the [configuration tool](https://shenliucn-prog.github.io/shawn-kanban/setup/) to set your own renderer's city, timezone, temperature unit, screen dimensions, font scale and modules. Import existing config.json to preserve other settings. Templates: daily, work, minimal. Downloaded settings apply to your own renderer, not the public demo.
+Use the [configuration tool](https://shenliucn-prog.github.io/daypane/setup/) to set your own renderer's city, timezone, temperature unit, screen dimensions, font scale and modules. Import existing config.json to preserve other settings. Templates: daily, work, minimal. Downloaded settings apply to your own renderer, not the public demo.
 
 On the Kindle, **Setup / test image** checks your source and **Device status** separates content age from download time. See [display protocol](docs/PROTOCOL.md) for custom integrations. Wi-Fi management and night schedule are opt-in; an experimental RTC test is supervised and single-shot.
 
@@ -28,7 +28,7 @@ cron-job.org triggers GitHub Actions at **:25 and :55** each hour. Actions gener
 
 - `main` contains source code; `runtime-data` stores quota input in a separate branch of the same repository.
 - Generated images are published as Pages deployment artifacts, not source commits. On generation failure, the pipeline attempts to retain the last good image.
-- The [dashboard](https://shenliucn-prog.github.io/shawn-kanban/) reports freshness; [status.json](https://shenliucn-prog.github.io/shawn-kanban/status.json) records generation time and workflow results. The web page marks images older than 45 minutes as stale.
+- The [dashboard](https://shenliucn-prog.github.io/daypane/) reports freshness; [status.json](https://shenliucn-prog.github.io/daypane/status.json) records generation time and workflow results. The web page marks images older than 45 minutes as stale.
 - Public data can update while the computer is off. Local activity estimates depend on the reporter and may retain their last values.
 
 See [cloud deployment](docs/CLOUD_DEPLOY.md). Renew the external trigger token before expiry; never commit it.
@@ -68,7 +68,7 @@ Requires a jailbroken Kindle with KOReader.
 1. Exit KOReader and connect the Kindle by USB.
 2. Back up `koreader/plugins/KindleDash.koplugin/` before upgrading, then replace it with this repository's `KindleDash.koplugin/` folder.
 3. Safely eject the device, restart KOReader, and open Tools → **DayPane** → **Refresh dashboard**.
-4. Under **Set cloud image URL**, use `https://shenliucn-prog.github.io/shawn-kanban/screen-en.png` for English or `https://shenliucn-prog.github.io/shawn-kanban/screen.png` for Chinese. New installations choose the built-in URL for their language. Existing settings are preserved; an existing empty URL must be filled in manually.
+4. Under **Set cloud image URL**, use `https://shenliucn-prog.github.io/daypane/screen-en.png` for English or `https://shenliucn-prog.github.io/daypane/screen.png` for Chinese. New installations choose the built-in URL for their language. Existing settings are preserved; an existing empty URL must be filled in manually.
 5. For local service access, set **Set LAN server** to your computer's `IP:8787` and allow inbound TCP 8787. Cloud-only use requires no inbound computer port.
 
 Image fallback order: **LAN computer → cloud → local cache**. An offline computer can cause a timeout before the plugin tries the cloud. HTTPS validates certificates and requires KOReader's CA bundle.
@@ -91,7 +91,7 @@ To roll back, exit KOReader, restore the backed-up plugin folder, and restart. I
 
 ## Dashboard language and compatibility
 
-- The existing `screen.png` and root Pages view stay Chinese for existing users. English is available at [`screen-en.png`](https://shenliucn-prog.github.io/shawn-kanban/screen-en.png) and the [English preview](https://shenliucn-prog.github.io/shawn-kanban/en/). Each locale retains its own last good image and status history (`status.json` / `en/status.json`).
+- The existing `screen.png` and root Pages view stay Chinese for existing users. English is available at [`screen-en.png`](https://shenliucn-prog.github.io/daypane/screen-en.png) and the [English preview](https://shenliucn-prog.github.io/daypane/en/). Each locale retains its own last good image and status history (`status.json` / `en/status.json`).
 - The plugin switches built-in cloud URLs when you change its language, while preserving custom URLs. For a custom image server, configure its matching language URL yourself. Image caches are separate by language.
 - Local image requests use `/api/screen?lang=en` or `?lang=zh`; the local browser dashboard remains Chinese. Set `PYTHON_BIN` if Python is not on PATH; install Pillow for local rendering.
 - Direct rendering supports `python tools/render_screen.py --data dashboard.json --lang en --out screen-en.png` (`zh` is the backward-compatible default).

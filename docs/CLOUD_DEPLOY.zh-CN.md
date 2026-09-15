@@ -16,7 +16,7 @@
 在 cron-job.org 创建任务：
 
 - 名称：DayPane half-hour render
-- URL：`https://api.github.com/repos/shenliucn-prog/shawn-kanban/actions/workflows/render.yml/dispatches`
+- URL：`https://api.github.com/repos/shenliucn-prog/daypane/actions/workflows/render.yml/dispatches`
 - 方法：POST
 - 请求正文：`{"ref":"main"}`
 - 每小时第 25、55 分钟运行。当前任务时区为 America/Los_Angeles，这两个分钟位置与 UTC 一致。留几分钟给生成和发布，让 Kindle 在整点/半点取图。
@@ -24,7 +24,7 @@
 - 请求头 `Content-Type: application/json`
 - 请求头 `Authorization: Bearer <专用令牌>`
 
-专用 GitHub fine-grained token 应只选 `shawn-kanban` 仓库，授予 Actions: write 和必需的 Metadata 读取权限，用于触发工作流。设置有效期并在到期前更新。不要把现有全账户令牌交给外部定时平台。凭证只填入定时器的认证请求头，不放 URL、不写进 Git。
+专用 GitHub fine-grained token 应只选 `daypane` 仓库，授予 Actions: write 和必需的 Metadata 读取权限，用于触发工作流。设置有效期并在到期前更新。不要把现有全账户令牌交给外部定时平台。凭证只填入定时器的认证请求头，不放 URL、不写进 Git。
 
 API 成功接受触发与图片发布成功是两件事。定时器请求很快返回，不等待生成；生成和部署结果在 GitHub Actions 检查。
 
@@ -34,11 +34,11 @@ GitHub 自带第 17、47 分钟定时仅为备份；`cancel-in-progress: false` 
 
 Settings → Pages → Source 设为 GitHub Actions。工作流使用 upload-pages-artifact / deploy-pages；图源地址不变：
 
-`https://shenliucn-prog.github.io/shawn-kanban/screen.png`
+`https://shenliucn-prog.github.io/daypane/screen.png`
 
-状态页：`https://shenliucn-prog.github.io/shawn-kanban/`
+状态页：`https://shenliucn-prog.github.io/daypane/`
 
-机器状态：`https://shenliucn-prog.github.io/shawn-kanban/status.json`
+机器状态：`https://shenliucn-prog.github.io/daypane/status.json`
 
 每次运行先读取上一张图片和校验和。公开数据全部失败、字体不可用或渲染失败时保留上一张好图，并发布失败状态。若安装依赖等更早步骤失败，则不产生新部署，已有 Pages 保持不动。状态网页按真实生成时间计算年龄，超过 45 分钟显示过期。
 
